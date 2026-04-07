@@ -69,3 +69,70 @@ npm test
 npm run example
 npm run verify -- pay_xxx
 ```
+
+## Local Webhook Testing
+
+Use `ngrok` to expose a local webhook receiver while you are still developing:
+
+```bash
+ngrok http 3000
+```
+
+Then use the HTTPS URL it gives you as `CLINK_DEMO_CALLBACK_URL`, for example:
+
+```env
+CLINK_DEMO_CALLBACK_URL=https://abc123.ngrok-free.app/webhooks/clink
+```
+
+## Deploying The Webhook Receiver To Vercel
+
+This repo now includes a Vercel Function at `api/webhooks/clink.js` and a rewrite in `vercel.json` so your callback URL can be:
+
+```text
+https://api.tryclink.com/webhooks/clink
+```
+
+Suggested steps:
+
+1. Install the Vercel CLI and log in:
+
+```bash
+npm i -g vercel
+vercel login
+```
+
+2. Deploy from the repo root:
+
+```bash
+vercel
+```
+
+3. Add the webhook secret in Vercel:
+
+```bash
+vercel env add CLINK_WEBHOOK_SECRET
+```
+
+4. Add your custom domain to the project:
+
+```bash
+vercel domains add api.tryclink.com
+vercel domains inspect api.tryclink.com
+```
+
+5. Create the DNS record Vercel tells you to add at your domain provider.
+
+6. After DNS and TLS are ready, set:
+
+```env
+CLINK_DEMO_CALLBACK_URL=https://api.tryclink.com/webhooks/clink
+```
+
+7. Create a new payment and verify it:
+
+```bash
+npm run example
+npm run verify -- pay_xxx
+```
+
+You can also open `https://api.tryclink.com/webhooks/clink` in the browser to confirm the receiver is online.

@@ -10,7 +10,9 @@
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "example": "ts-node examples/manual-demo.ts",
-    "verify": "ts-node examples/verify-payment.ts"
+    "verify": "ts-node examples/verify-payment.ts",
+    "vercel:dev": "npx vercel dev",
+    "deploy:vercel": "npx vercel"
   },
   "keywords": [
     "stellar",
