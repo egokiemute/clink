@@ -1,0 +1,41 @@
+{
+  "name": "@clink/sdk",
+  "version": "0.1.0",
+  "description": "Stellar USDC payment infrastructure for West Africa",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "example": "ts-node examples/manual-demo.ts",
+    "verify": "ts-node examples/verify-payment.ts"
+  },
+  "keywords": [
+    "stellar",
+    "usdc",
+    "payments",
+    "west-africa",
+    "blockchain"
+  ],
+  "author": "Okiemute",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.0.1",
+    "axios": "^1.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^25.5.2",
+    "dotenv": "^17.4.1",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

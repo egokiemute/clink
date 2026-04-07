@@ -1,0 +1,1 @@
+{"version":3,"file":"verify.d.ts","sourceRoot":"","sources":["../../src/webhooks/verify.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,mBAAmB,EAAE,MAAM,UAAU,CAAC;AAI/C,wBAAgB,sBAAsB,CAAC,MAAM,EAAE,mBAAmB,GAAG,OAAO,CAa3E;AAED,qBAAa,eAAe;IAC1B,MAAM,CAAC,MAAM,EAAE,mBAAmB,GAAG,OAAO;IAI5C,WAAW,CAAC,MAAM,EAAE,mBAAmB,GAAG,IAAI;CAK/C"}
