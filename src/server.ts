@@ -7,7 +7,13 @@ dotenv.config();
 import Clink from './index';
 import { DeveloperService } from './developers/service';
 import { DeveloperRepository } from './storage/developers';
+import { SqlitePaymentRepository } from './storage/sqlite';
 import { ClinkError } from './utils/errors';
+
+const ALLOWED_ORIGINS = [
+  'https://pay.tryclink.com',
+  'http://localhost:3001', // local frontend dev
+];
 import { DatabaseSync } from 'node:sqlite';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -30,6 +36,7 @@ const db = new DatabaseSync(dbPath);
 
 const developerRepo = new DeveloperRepository(db);
 const developerService = new DeveloperService(developerRepo);
+const paymentRepo = new SqlitePaymentRepository(dbPath);
 
 const clink = new Clink({
   secretKey: requireEnv('CLINK_SECRET_KEY'),
@@ -55,6 +62,15 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
     });
     req.on('error', reject);
   });
+}
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers['origin'];
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
@@ -133,6 +149,82 @@ const server = createServer(async (req, res) => {
       });
 
       sendJson(res, 201, result);
+      return;
+    }
+
+    // OPTIONS preflight — for CORS on /pay/* routes
+    if (method === 'OPTIONS' && pathname.startsWith('/pay/')) {
+      setCorsHeaders(req, res);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // GET /pay/:id — public, browser-safe payment details
+    const publicPayMatch = pathname.match(/^\/pay\/([^/]+)$/);
+    if (method === 'GET' && publicPayMatch) {
+      setCorsHeaders(req, res);
+      const payment = paymentRepo.getById(publicPayMatch[1]);
+      if (!payment) {
+        sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
+        return;
+      }
+      // Return safe subset — strip callbackUrl and raw metadata
+      const { callbackUrl: _cb, ...safe } = payment;
+      const successUrl = typeof payment.metadata?.successUrl === 'string' ? payment.metadata.successUrl : undefined;
+      const cancelUrl = typeof payment.metadata?.cancelUrl === 'string' ? payment.metadata.cancelUrl : undefined;
+      sendJson(res, 200, { ...safe, metadata: undefined, successUrl, cancelUrl });
+      return;
+    }
+
+    // GET /pay/:id/stream — SSE, polls DB every 3s and pushes updates
+    const sseMatch = pathname.match(/^\/pay\/([^/]+)\/stream$/);
+    if (method === 'GET' && sseMatch) {
+      setCorsHeaders(req, res);
+      const paymentId = sseMatch[1];
+      const initial = paymentRepo.getById(paymentId);
+      if (!initial) {
+        sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
+        return;
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+
+      const TERMINAL = new Set(['settled', 'expired', 'failed']);
+
+      const sendEvent = (data: unknown) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      // Send initial state immediately
+      sendEvent(initial);
+
+      if (TERMINAL.has(initial.status)) {
+        res.end();
+        return;
+      }
+
+      const interval = setInterval(async () => {
+        try {
+          // verify() polls Stellar + triggers settlement if confirmed
+          const updated = await clink.payments.verify(paymentId);
+          sendEvent(updated);
+          if (TERMINAL.has(updated.status)) {
+            clearInterval(interval);
+            res.end();
+          }
+        } catch {
+          clearInterval(interval);
+          res.end();
+        }
+      }, 3000);
+
+      req.on('close', () => clearInterval(interval));
       return;
     }
 
