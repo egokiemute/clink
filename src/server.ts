@@ -5,7 +5,10 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import Clink from './index';
+import { DeveloperService } from './developers/service';
+import { DeveloperRepository } from './storage/developers';
 import { ClinkError } from './utils/errors';
+import { DatabaseSync } from 'node:sqlite';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -15,11 +18,24 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const dbPath = process.env.CLINK_DATABASE_PATH ?? resolve(process.cwd(), 'clink.sqlite');
+
+// Shared DB instance so both repositories use the same file
+import { mkdirSync, existsSync } from 'node:fs';
+import { dirname } from 'node:path';
+if (dbPath !== ':memory:' && !existsSync(dirname(dbPath))) {
+  mkdirSync(dirname(dbPath), { recursive: true });
+}
+const db = new DatabaseSync(dbPath);
+
+const developerRepo = new DeveloperRepository(db);
+const developerService = new DeveloperService(developerRepo);
+
 const clink = new Clink({
   secretKey: requireEnv('CLINK_SECRET_KEY'),
   environment: (process.env.STELLAR_NETWORK as 'testnet' | 'mainnet') ?? 'testnet',
   webhookSecret: process.env.CLINK_WEBHOOK_SECRET,
-  databasePath: process.env.CLINK_DATABASE_PATH ?? resolve(process.cwd(), 'clink.sqlite'),
+  databasePath: dbPath,
   paymentExpiryMinutes: Number(process.env.CLINK_PAYMENT_EXPIRY_MINUTES ?? '30'),
   stellarSecretKey: process.env.STELLAR_MASTER_SECRET,
   receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
@@ -69,17 +85,74 @@ function errorCodeToStatus(code: ClinkError['code']): number {
   }
 }
 
+function authenticate(req: IncomingMessage): void {
+  const authHeader = req.headers['authorization'];
+  const secretKey = authHeader?.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : req.headers['x-api-key'] as string | undefined;
+
+  if (!secretKey) {
+    throw new ClinkError('INVALID_API_KEY', 'Missing API key. Pass it as Authorization: Bearer <key> or x-api-key header.');
+  }
+
+  const developer = developerRepo.getBySecretKey(secretKey);
+  if (!developer) {
+    throw new ClinkError('INVALID_API_KEY', 'Invalid API key.');
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost`);
   const pathname = url.pathname;
   const method = req.method ?? 'GET';
 
   try {
-    // GET /health
+    // GET /health — public
     if (method === 'GET' && pathname === '/health') {
       sendJson(res, 200, { status: 'ok' });
       return;
     }
+
+    // POST /developers/register — public
+    if (method === 'POST' && pathname === '/developers/register') {
+      const body = await readBody(req) as Record<string, unknown>;
+
+      if (!body.name || typeof body.name !== 'string') {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'name is required.' });
+        return;
+      }
+      if (!body.email || typeof body.email !== 'string') {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email is required.' });
+        return;
+      }
+
+      const result = await developerService.register({
+        name: body.name,
+        email: body.email,
+        company: typeof body.company === 'string' ? body.company : undefined,
+      });
+
+      sendJson(res, 201, result);
+      return;
+    }
+
+    // POST /webhooks/clink — public (verified by signature)
+    if (method === 'POST' && pathname === '/webhooks/clink') {
+      const body = await readBody(req) as Record<string, unknown>;
+      const signature = req.headers['x-clink-signature'] as string | undefined;
+      const webhookSecret = process.env.CLINK_WEBHOOK_SECRET ?? requireEnv('CLINK_SECRET_KEY');
+      const valid = clink.webhooks.verify({ payload: body, signature, secret: webhookSecret });
+      if (!valid) {
+        sendJson(res, 401, { error: 'INVALID_SIGNATURE', message: 'Webhook signature invalid' });
+        return;
+      }
+      console.log(`[webhook] event=${body.event} paymentId=${(body.data as any)?.id}`);
+      sendJson(res, 200, { received: true });
+      return;
+    }
+
+    // All routes below require a valid API key
+    authenticate(req);
 
     // POST /payments
     if (method === 'POST' && pathname === '/payments') {
@@ -114,21 +187,6 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && paymentMatch) {
       const payment = await clink.payments.verify(paymentMatch[1]);
       sendJson(res, 200, payment);
-      return;
-    }
-
-    // POST /webhooks/clink
-    if (method === 'POST' && pathname === '/webhooks/clink') {
-      const body = await readBody(req) as Record<string, unknown>;
-      const signature = req.headers['x-clink-signature'] as string | undefined;
-      const webhookSecret = process.env.CLINK_WEBHOOK_SECRET ?? requireEnv('CLINK_SECRET_KEY');
-      const valid = clink.webhooks.verify({ payload: body, signature, secret: webhookSecret });
-      if (!valid) {
-        sendJson(res, 401, { error: 'INVALID_SIGNATURE', message: 'Webhook signature invalid' });
-        return;
-      }
-      console.log(`[webhook] event=${body.event} paymentId=${(body.data as any)?.id}`);
-      sendJson(res, 200, { received: true });
       return;
     }
 

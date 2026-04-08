@@ -1,138 +1,210 @@
-# Clink SDK
+# clink-sdk
 
-Server-side TypeScript SDK for accepting Stellar USDC payments and settling them into local West African currencies.
-
-## Status
-
-This repository contains the MVP server SDK. It is designed for hackathon demos and local integration work first.
+Accept USDC payments on Stellar and receive local currency payouts (NGN, GHS, KES, UGX).
 
 ## Requirements
 
-- Node.js 24+
-- A Stellar testnet receiving address or master secret
-- A Paychant sandbox key, or mock settlement mode for local demos
+- Node.js >= 24
 
-## Install
+## Installation
 
 ```bash
-npm install
+npm install clink-sdk
 ```
 
-## Quickstart
+## Quick start
 
 ```ts
-import Clink from '@clink/sdk';
+import Clink from 'clink-sdk';
 
 const clink = new Clink({
-  secretKey: process.env.CLINK_SECRET_KEY!,
-  environment: 'testnet',
-  paychantKey: process.env.PAYCHANT_PARTNER_API_KEY!,
-  webhookSecret: process.env.CLINK_WEBHOOK_SECRET,
-  databasePath: process.env.CLINK_DATABASE_PATH,
-  stellarSecretKey: process.env.STELLAR_MASTER_SECRET,
+  secretKey: process.env.CLINK_SECRET_KEY,      // must start with clink_sk_
+  environment: 'testnet',                        // or 'mainnet'
   receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
-  paychantMockMode: true,
+  webhookSecret: process.env.CLINK_WEBHOOK_SECRET,
 });
+```
 
+## Configuration
+
+| Option | Required | Description |
+|---|---|---|
+| `secretKey` | Yes | Your Clink secret key — must start with `clink_sk_` |
+| `environment` | Yes | `'testnet'` or `'mainnet'` |
+| `receivingAddress` | Yes* | Stellar public key to receive USDC payments |
+| `stellarSecretKey` | Yes* | Stellar secret key (alternative to `receivingAddress`) |
+| `webhookSecret` | No | Secret used to sign webhook payloads (falls back to `secretKey`) |
+| `databasePath` | No | Path to SQLite file (default: `./clink.sqlite`) |
+| `paymentExpiryMinutes` | No | Minutes until a pending payment expires (default: `30`) |
+| `stellarHorizonUrl` | No | Custom Horizon URL (defaults to public testnet/mainnet) |
+
+*Provide either `receivingAddress` or `stellarSecretKey`.
+
+## Payments
+
+### Create a payment
+
+```ts
 const payment = await clink.payments.create({
-  amount: 5,
+  amount: 10,                        // USDC amount
   currency: 'USDC',
-  localCurrency: 'NGN',
-  description: 'Order #1234',
-  customerEmail: 'buyer@example.com',
-  callbackUrl: 'https://example.com/webhooks/clink',
-  metadata: { orderId: '1234' },
+  localCurrency: 'NGN',              // 'NGN' | 'GHS' | 'KES' | 'UGX'
+  callbackUrl: 'https://yourapp.com/webhooks/clink',
+  description: 'Order #1234',        // optional
+  customerEmail: 'user@example.com', // optional
+  metadata: { orderId: '1234' },     // optional, returned in webhooks
 });
-
-const verified = await clink.payments.verify(payment.id);
-console.log(verified.status);
 ```
 
-## Config Notes
+Response:
 
-- `secretKey` is the Clink application key placeholder for this MVP.
-- Provide `stellarSecretKey` or `receivingAddress` so the SDK knows which shared Stellar address to monitor.
-- `paychantMockMode: true` is the easiest way to demo the full lifecycle locally while Paychant sandbox details are still being finalized.
-- SQLite uses Node's built-in `node:sqlite` module, so Node 24+ is required.
+```json
+{
+  "id": "pay_abc123",
+  "stellarAddress": "G...",
+  "memo": "CLINK-abc123",
+  "amount": 10,
+  "currency": "USDC",
+  "localCurrency": "NGN",
+  "status": "pending",
+  "expiresAt": "2025-01-01T00:30:00.000Z",
+  "createdAt": "2025-01-01T00:00:00.000Z"
+}
+```
 
-## Project Layout
+Show the customer `stellarAddress` and `memo` — they must include the memo when sending USDC or the payment cannot be matched.
 
-- `src/` SDK source
-- `tests/` unit and integration-style tests
-- `examples/manual-demo.ts` manual demo flow using the real `Clink` API
+### Check payment status
 
-## Scripts
+```ts
+const payment = await clink.payments.verify('pay_abc123');
+// Checks Stellar for the incoming transaction and triggers settlement
+```
+
+### List payments
+
+```ts
+const payments = await clink.payments.list();
+
+// With filters
+const pending = await clink.payments.list({ status: 'pending', limit: 20 });
+```
+
+## Payment lifecycle
+
+```
+pending → confirmed → settled
+       ↘ expired
+       ↘ failed
+```
+
+| Status | Meaning |
+|---|---|
+| `pending` | Awaiting USDC on Stellar |
+| `confirmed` | USDC received on Stellar, settlement in progress |
+| `settled` | Converted to local currency and paid out |
+| `expired` | Payment not received before `paymentExpiryMinutes` elapsed |
+| `failed` | Settlement failed |
+
+## Webhooks
+
+Clink POSTs a signed payload to `callbackUrl` on each status change.
+
+### Events
+
+| Event | Fired when |
+|---|---|
+| `payment.confirmed` | USDC received on Stellar |
+| `payment.settled` | Local currency payout complete |
+| `payment.failed` | Settlement failed |
+| `payment.expired` | Payment expired before USDC was received |
+
+### Payload
+
+```json
+{
+  "event": "payment.settled",
+  "data": { ...payment },
+  "signature": "sha256=..."
+}
+```
+
+The signature is also sent as the `x-clink-signature` request header.
+
+### Verifying signatures
+
+Always verify the signature before processing a webhook:
+
+```ts
+import express from 'express';
+import Clink from 'clink-sdk';
+
+const clink = new Clink({ ... });
+const app = express();
+
+app.post('/webhooks/clink', express.json(), (req, res) => {
+  const valid = clink.webhooks.verify({
+    payload: req.body,
+    signature: req.headers['x-clink-signature'] as string,
+    secret: process.env.CLINK_WEBHOOK_SECRET,
+  });
+
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  const { event, data } = req.body;
+
+  if (event === 'payment.settled') {
+    // fulfill order for data.metadata.orderId
+  }
+
+  res.json({ received: true });
+});
+```
+
+## Environment variables
+
+All constructor options can be set via environment variables:
 
 ```bash
-npm run build
-npm test
-npm run example
-npm run verify -- pay_xxx
+CLINK_SECRET_KEY=clink_sk_...
+CLINK_WEBHOOK_SECRET=...
+CLINK_DATABASE_PATH=./clink.sqlite
+CLINK_PAYMENT_EXPIRY_MINUTES=30
+STELLAR_NETWORK=testnet
+STELLAR_RECEIVING_ADDRESS=G...
+STELLAR_MASTER_SECRET=S...
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 ```
 
-## Local Webhook Testing
+## Hosted REST API
 
-Use `ngrok` to expose a local webhook receiver while you are still developing:
+Prefer HTTP over the SDK? Use the hosted API at [api.tryclink.com](https://api.tryclink.com).
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/payments` | Create a payment |
+| `GET` | `/payments` | List payments |
+| `GET` | `/payments/:id` | Get / verify a payment |
+| `POST` | `/webhooks/clink` | Receive webhook events |
+
+### Example
 
 ```bash
-ngrok http 3000
+curl -X POST https://api.tryclink.com/payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 10,
+    "localCurrency": "NGN",
+    "callbackUrl": "https://yourapp.com/webhooks/clink",
+    "customerEmail": "user@example.com"
+  }'
 ```
 
-Then use the HTTPS URL it gives you as `CLINK_DEMO_CALLBACK_URL`, for example:
+## License
 
-```env
-CLINK_DEMO_CALLBACK_URL=https://abc123.ngrok-free.app/webhooks/clink
-```
-
-## Deploying The Webhook Receiver To Vercel
-
-This repo now includes a Vercel Function at `api/webhooks/clink.js` and a rewrite in `vercel.json` so your callback URL can be:
-
-```text
-https://api.tryclink.com/webhooks/clink
-```
-
-Suggested steps:
-
-1. Install the Vercel CLI and log in:
-
-```bash
-npm i -g vercel
-vercel login
-```
-
-2. Deploy from the repo root:
-
-```bash
-vercel
-```
-
-3. Add the webhook secret in Vercel:
-
-```bash
-vercel env add CLINK_WEBHOOK_SECRET
-```
-
-4. Add your custom domain to the project:
-
-```bash
-vercel domains add api.tryclink.com
-vercel domains inspect api.tryclink.com
-```
-
-5. Create the DNS record Vercel tells you to add at your domain provider.
-
-6. After DNS and TLS are ready, set:
-
-```env
-CLINK_DEMO_CALLBACK_URL=https://api.tryclink.com/webhooks/clink
-```
-
-7. Create a new payment and verify it:
-
-```bash
-npm run example
-npm run verify -- pay_xxx
-```
-
-You can also open `https://api.tryclink.com/webhooks/clink` in the browser to confirm the receiver is online.
+MIT

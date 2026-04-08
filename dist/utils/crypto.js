@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.generatePaymentId = generatePaymentId;
 exports.generatePaymentMemo = generatePaymentMemo;
 exports.signPayload = signPayload;
+exports.generateSecretKey = generateSecretKey;
 exports.signaturesMatch = signaturesMatch;
 const node_crypto_1 = require("node:crypto");
 const HMAC_ALGORITHM = 'sha256';
@@ -15,6 +16,9 @@ function generatePaymentMemo(paymentId) {
 function signPayload(payload, secret) {
     const serializedPayload = typeof payload === 'string' ? payload : JSON.stringify(payload);
     return (0, node_crypto_1.createHmac)(HMAC_ALGORITHM, secret).update(serializedPayload).digest('hex');
+}
+function generateSecretKey() {
+    return `clink_sk_${(0, node_crypto_1.randomBytes)(24).toString('hex')}`;
 }
 function signaturesMatch(expected, actual) {
     const expectedBuffer = Buffer.from(expected);

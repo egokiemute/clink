@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 const HMAC_ALGORITHM = 'sha256';
 
@@ -18,6 +18,10 @@ export function signPayload(
     typeof payload === 'string' ? payload : JSON.stringify(payload);
 
   return createHmac(HMAC_ALGORITHM, secret).update(serializedPayload).digest('hex');
+}
+
+export function generateSecretKey(): string {
+  return `clink_sk_${randomBytes(24).toString('hex')}`;
 }
 
 export function signaturesMatch(expected: string, actual: string): boolean {
