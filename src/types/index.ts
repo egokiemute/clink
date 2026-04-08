@@ -18,12 +18,9 @@ export type WebhookEvent =
 export interface ClinkConfig {
   secretKey: string;
   environment: ClinkEnvironment;
-  paychantKey: string;
   webhookSecret?: string;
   databasePath?: string;
   paymentExpiryMinutes?: number;
-  paychantBaseUrl?: string;
-  paychantMockMode?: boolean;
   stellarSecretKey?: string;
   receivingAddress?: string;
   stellarHorizonUrl?: string;

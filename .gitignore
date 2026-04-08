@@ -9,3 +9,4 @@ coverage/
 clink.sqlite
 clink.sqlite-*
 
+.vercel

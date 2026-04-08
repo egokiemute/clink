@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 
-import { PaychantClient } from './paychant/client';
 import { PaymentsService } from './payments/service';
+import { MockSettlementProvider } from './settlement/mock';
 import { SqlitePaymentRepository } from './storage/sqlite';
 import { StellarClient } from './stellar/client';
 import {
@@ -22,12 +22,9 @@ import { WebhookVerifier, verifyWebhookSignature } from './webhooks/verify';
 interface ResolvedClinkConfig {
   secretKey: string;
   environment: ClinkConfig['environment'];
-  paychantKey: string;
   webhookSecret: string;
   databasePath: string;
   paymentExpiryMinutes: number;
-  paychantBaseUrl: string;
-  paychantMockMode: boolean;
   stellarSecretKey?: string;
   receivingAddress?: string;
   stellarHorizonUrl?: string;
@@ -53,11 +50,9 @@ class Clink {
       receivingAddress: config.receivingAddress ?? process.env.STELLAR_RECEIVING_ADDRESS,
     });
 
-    const paychantMockModeFromEnv = process.env.PAYCHANT_MOCK_MODE;
     const resolvedConfig: ResolvedClinkConfig = {
       secretKey: config.secretKey,
       environment: config.environment,
-      paychantKey: config.paychantKey,
       paymentExpiryMinutes:
         config.paymentExpiryMinutes ??
         Number(process.env.CLINK_PAYMENT_EXPIRY_MINUTES ?? '30'),
@@ -70,13 +65,6 @@ class Clink {
       stellarSecretKey: config.stellarSecretKey ?? process.env.STELLAR_MASTER_SECRET,
       receivingAddress: config.receivingAddress ?? process.env.STELLAR_RECEIVING_ADDRESS,
       stellarHorizonUrl: config.stellarHorizonUrl ?? process.env.STELLAR_HORIZON_URL,
-      paychantBaseUrl:
-        config.paychantBaseUrl ??
-        process.env.PAYCHANT_BASE_URL ??
-        'https://api-sandbox.paychant.com/v1',
-      paychantMockMode:
-        config.paychantMockMode ??
-        (paychantMockModeFromEnv ? paychantMockModeFromEnv === 'true' : true),
     };
 
     if (resolvedConfig.paymentExpiryMinutes <= 0) {
@@ -95,18 +83,14 @@ class Clink {
       receivingAddress: this.config.receivingAddress,
       horizonUrl: this.config.stellarHorizonUrl,
     });
-    const paychantClient = new PaychantClient({
-      apiKey: this.config.paychantKey,
-      baseUrl: this.config.paychantBaseUrl,
-      mockMode: this.config.paychantMockMode,
-    });
+    const settlementProvider = new MockSettlementProvider();
     const webhookDispatcher = new HttpWebhookDispatcher({
       secret: this.config.webhookSecret,
     });
     const paymentsService = new PaymentsService(
       repository,
       stellarClient,
-      paychantClient,
+      settlementProvider,
       webhookDispatcher,
       {
         paymentExpiryMinutes: this.config.paymentExpiryMinutes,
@@ -129,7 +113,7 @@ class Clink {
 export default Clink;
 
 export { PaymentsService } from './payments/service';
-export { PaychantClient } from './paychant/client';
+export { MockSettlementProvider } from './settlement/mock';
 export { SqlitePaymentRepository } from './storage/sqlite';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';

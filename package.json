@@ -6,13 +6,12 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "example": "ts-node examples/manual-demo.ts",
-    "verify": "ts-node examples/verify-payment.ts",
-    "vercel:dev": "npx vercel dev",
-    "deploy:vercel": "npx vercel"
+    "verify": "ts-node examples/verify-payment.ts"
   },
   "keywords": [
     "stellar",
@@ -29,12 +28,12 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
-    "axios": "^1.14.0"
+    "axios": "^1.14.0",
+    "dotenv": "^17.4.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
     "@types/node": "^25.5.2",
-    "dotenv": "^17.4.1",
     "jest": "^29.7.0",
     "ts-jest": "^29.4.5",
     "ts-node": "^10.9.2",

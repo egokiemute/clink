@@ -13,7 +13,7 @@ declare class Clink {
 }
 export default Clink;
 export { PaymentsService } from './payments/service';
-export { PaychantClient } from './paychant/client';
+export { MockSettlementProvider } from './settlement/mock';
 export { SqlitePaymentRepository } from './storage/sqlite';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';

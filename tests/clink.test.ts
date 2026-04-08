@@ -8,8 +8,6 @@ describe('Clink', () => {
     const clink = new Clink({
       secretKey: 'clink_sk_test_12345',
       environment: 'testnet',
-      paychantKey: 'paychant_test_12345',
-      paychantMockMode: true,
       databasePath: ':memory:',
       receivingAddress: RECEIVING_ADDRESS,
     });
@@ -34,8 +32,6 @@ describe('Clink', () => {
         new Clink({
           secretKey: 'invalid',
           environment: 'testnet',
-          paychantKey: 'paychant_test_12345',
-          paychantMockMode: true,
           databasePath: ':memory:',
           receivingAddress: RECEIVING_ADDRESS,
         }),

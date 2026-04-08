@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: clink-api
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: CLINK_SECRET_KEY
+        sync: false
+      - key: CLINK_WEBHOOK_SECRET
+        sync: false
+      - key: CLINK_DATABASE_PATH
+        value: /data/clink.sqlite
+      - key: CLINK_PAYMENT_EXPIRY_MINUTES
+        value: 30
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_MASTER_SECRET
+        sync: false
+      - key: STELLAR_RECEIVING_ADDRESS
+        sync: false
+      - key: STELLAR_HORIZON_URL
+        value: https://horizon-testnet.stellar.org
+    disk:
+      name: clink-data
+      mountPath: /data
+      sizeGB: 1
