@@ -12,8 +12,8 @@ export class DeveloperService {
     name: string;
     email: string;
     company?: string;
-  }): Promise<{ message: string }> {
-    const existing = this.repo.getByEmail(params.email);
+  }): Promise<{ message: string; developer: { id: string; name: string; email: string; company?: string; secretKey: string; createdAt: string } }> {
+    const existing = await this.repo.getByEmail(params.email);
 
     if (existing) {
       throw new ClinkError(
@@ -22,7 +22,7 @@ export class DeveloperService {
       );
     }
 
-    const developer = this.repo.create({
+    const developer = await this.repo.create({
       id: randomUUID(),
       name: params.name,
       email: params.email,
@@ -37,6 +37,16 @@ export class DeveloperService {
       secretKey: developer.secretKey,
     });
 
-    return { message: 'API key sent — check your email.' };
+    return {
+      message: 'Account created. Copy your secret key — it will not be shown again.',
+      developer: {
+        id: developer.id,
+        name: developer.name,
+        email: developer.email,
+        company: developer.company,
+        secretKey: developer.secretKey,
+        createdAt: developer.createdAt,
+      },
+    };
   }
 }

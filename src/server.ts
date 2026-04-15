@@ -7,14 +7,14 @@ dotenv.config();
 import Clink from './index';
 import { DeveloperService } from './developers/service';
 import { DeveloperRepository } from './storage/developers';
+import { AdminRepository } from './storage/admins';
 import { SqlitePaymentRepository } from './storage/sqlite';
 import { ClinkError } from './utils/errors';
 
 const ALLOWED_ORIGINS = [
   'https://pay.tryclink.com',
-  'http://localhost:3001', // local frontend dev
+  'http://localhost:3001',
 ];
-import { DatabaseSync } from 'node:sqlite';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -26,16 +26,9 @@ function requireEnv(name: string): string {
 
 const dbPath = process.env.CLINK_DATABASE_PATH ?? resolve(process.cwd(), 'clink.sqlite');
 
-// Shared DB instance so both repositories use the same file
-import { mkdirSync, existsSync } from 'node:fs';
-import { dirname } from 'node:path';
-if (dbPath !== ':memory:' && !existsSync(dirname(dbPath))) {
-  mkdirSync(dirname(dbPath), { recursive: true });
-}
-const db = new DatabaseSync(dbPath);
-
-const developerRepo = new DeveloperRepository(db);
+const developerRepo = new DeveloperRepository();
 const developerService = new DeveloperService(developerRepo);
+const adminRepo = new AdminRepository();
 const paymentRepo = new SqlitePaymentRepository(dbPath);
 
 const clink = new Clink({
@@ -48,6 +41,16 @@ const clink = new Clink({
   receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
   stellarHorizonUrl: process.env.STELLAR_HORIZON_URL,
 });
+
+// Seed admin credentials from env on startup
+async function seedAdmin() {
+  const email = process.env.ADMIN_USER;
+  const password = process.env.ADMIN_PASSWORD;
+  if (email && password) {
+    await adminRepo.seed(email, password);
+    console.log(`[admin] Admin user seeded: ${email}`);
+  }
+}
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -68,8 +71,8 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   const origin = req.headers['origin'];
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
   }
 }
 
@@ -101,19 +104,28 @@ function errorCodeToStatus(code: ClinkError['code']): number {
   }
 }
 
-function authenticate(req: IncomingMessage): void {
+function extractSecretKey(req: IncomingMessage): string | undefined {
   const authHeader = req.headers['authorization'];
-  const secretKey = authHeader?.startsWith('Bearer ')
+  return authHeader?.startsWith('Bearer ')
     ? authHeader.slice(7)
     : req.headers['x-api-key'] as string | undefined;
+}
 
+async function authenticate(req: IncomingMessage): Promise<void> {
+  const secretKey = extractSecretKey(req);
   if (!secretKey) {
     throw new ClinkError('INVALID_API_KEY', 'Missing API key. Pass it as Authorization: Bearer <key> or x-api-key header.');
   }
-
-  const developer = developerRepo.getBySecretKey(secretKey);
+  const developer = await developerRepo.getBySecretKey(secretKey);
   if (!developer) {
     throw new ClinkError('INVALID_API_KEY', 'Invalid API key.');
+  }
+}
+
+async function authenticateAdmin(req: IncomingMessage): Promise<void> {
+  const token = extractSecretKey(req);
+  if (!token || token !== process.env.CLINK_ADMIN_KEY) {
+    throw new ClinkError('INVALID_API_KEY', 'Invalid admin credentials.');
   }
 }
 
@@ -123,7 +135,15 @@ const server = createServer(async (req, res) => {
   const method = req.method ?? 'GET';
 
   try {
-    // GET /health — public
+    // CORS preflight
+    if (method === 'OPTIONS') {
+      setCorsHeaders(req, res);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // GET /health
     if (method === 'GET' && pathname === '/health') {
       sendJson(res, 200, { status: 'ok' });
       return;
@@ -132,7 +152,6 @@ const server = createServer(async (req, res) => {
     // POST /developers/register — public
     if (method === 'POST' && pathname === '/developers/register') {
       const body = await readBody(req) as Record<string, unknown>;
-
       if (!body.name || typeof body.name !== 'string') {
         sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'name is required.' });
         return;
@@ -141,26 +160,32 @@ const server = createServer(async (req, res) => {
         sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email is required.' });
         return;
       }
-
       const result = await developerService.register({
         name: body.name,
         email: body.email,
         company: typeof body.company === 'string' ? body.company : undefined,
       });
-
       sendJson(res, 201, result);
       return;
     }
 
-    // OPTIONS preflight — for CORS on /pay/* routes
-    if (method === 'OPTIONS' && pathname.startsWith('/pay/')) {
-      setCorsHeaders(req, res);
-      res.writeHead(204);
-      res.end();
+    // POST /admin/login — validates email + password, returns admin token
+    if (method === 'POST' && pathname === '/admin/login') {
+      const body = await readBody(req) as Record<string, unknown>;
+      if (!body.email || !body.password) {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email and password are required.' });
+        return;
+      }
+      const valid = await adminRepo.verify(body.email as string, body.password as string);
+      if (!valid) {
+        sendJson(res, 401, { error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
+        return;
+      }
+      sendJson(res, 200, { token: process.env.CLINK_ADMIN_KEY });
       return;
     }
 
-    // GET /pay/:id — public, browser-safe payment details
+    // GET /pay/:id — public
     const publicPayMatch = pathname.match(/^\/pay\/([^/]+)$/);
     if (method === 'GET' && publicPayMatch) {
       setCorsHeaders(req, res);
@@ -169,7 +194,6 @@ const server = createServer(async (req, res) => {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
       }
-      // Return safe subset — strip callbackUrl and raw metadata
       const { callbackUrl: _cb, ...safe } = payment;
       const successUrl = typeof payment.metadata?.successUrl === 'string' ? payment.metadata.successUrl : undefined;
       const cancelUrl = typeof payment.metadata?.cancelUrl === 'string' ? payment.metadata.cancelUrl : undefined;
@@ -177,7 +201,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /pay/:id/stream — SSE, polls DB every 3s and pushes updates
+    // GET /pay/:id/stream — SSE
     const sseMatch = pathname.match(/^\/pay\/([^/]+)\/stream$/);
     if (method === 'GET' && sseMatch) {
       setCorsHeaders(req, res);
@@ -187,48 +211,28 @@ const server = createServer(async (req, res) => {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
       }
-
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
-
       const TERMINAL = new Set(['settled', 'expired', 'failed']);
-
-      const sendEvent = (data: unknown) => {
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-      };
-
-      // Send initial state immediately
+      const sendEvent = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
       sendEvent(initial);
-
-      if (TERMINAL.has(initial.status)) {
-        res.end();
-        return;
-      }
-
+      if (TERMINAL.has(initial.status)) { res.end(); return; }
       const interval = setInterval(async () => {
         try {
-          // verify() polls Stellar + triggers settlement if confirmed
           const updated = await clink.payments.verify(paymentId);
           sendEvent(updated);
-          if (TERMINAL.has(updated.status)) {
-            clearInterval(interval);
-            res.end();
-          }
-        } catch {
-          clearInterval(interval);
-          res.end();
-        }
+          if (TERMINAL.has(updated.status)) { clearInterval(interval); res.end(); }
+        } catch { clearInterval(interval); res.end(); }
       }, 3000);
-
       req.on('close', () => clearInterval(interval));
       return;
     }
 
-    // POST /webhooks/clink — public (verified by signature)
+    // POST /webhooks/clink — verified by signature
     if (method === 'POST' && pathname === '/webhooks/clink') {
       const body = await readBody(req) as Record<string, unknown>;
       const signature = req.headers['x-clink-signature'] as string | undefined;
@@ -243,8 +247,36 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // All routes below require a valid API key
-    authenticate(req);
+    // GET /me — merchant profile
+    if (method === 'GET' && pathname === '/me') {
+      const secretKey = extractSecretKey(req);
+      if (!secretKey) throw new ClinkError('INVALID_API_KEY', 'Missing API key.');
+      const developer = await developerRepo.getBySecretKey(secretKey);
+      if (!developer) throw new ClinkError('INVALID_API_KEY', 'Invalid API key.');
+      sendJson(res, 200, developer);
+      return;
+    }
+
+    // GET /admin/payments
+    if (method === 'GET' && pathname === '/admin/payments') {
+      await authenticateAdmin(req);
+      const status = url.searchParams.get('status') as 'pending' | 'confirmed' | 'settled' | 'expired' | 'failed' | undefined;
+      const limit = url.searchParams.get('limit');
+      const payments = await clink.payments.list({ status: status ?? undefined, limit: limit ? Number(limit) : undefined });
+      sendJson(res, 200, payments);
+      return;
+    }
+
+    // GET /admin/merchants
+    if (method === 'GET' && pathname === '/admin/merchants') {
+      await authenticateAdmin(req);
+      const merchants = (await developerRepo.getAll()).map(({ secretKey: _sk, ...m }) => m);
+      sendJson(res, 200, merchants);
+      return;
+    }
+
+    // All routes below require a valid merchant API key
+    await authenticate(req);
 
     // POST /payments
     if (method === 'POST' && pathname === '/payments') {
@@ -266,10 +298,7 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && pathname === '/payments') {
       const status = url.searchParams.get('status') as 'pending' | 'confirmed' | 'settled' | 'expired' | 'failed' | undefined;
       const limit = url.searchParams.get('limit');
-      const payments = await clink.payments.list({
-        status: status ?? undefined,
-        limit: limit ? Number(limit) : undefined,
-      });
+      const payments = await clink.payments.list({ status: status ?? undefined, limit: limit ? Number(limit) : undefined });
       sendJson(res, 200, payments);
       return;
     }
@@ -288,6 +317,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Clink server running on port ${PORT}`);
-});
+seedAdmin()
+  .then(() => server.listen(PORT, () => console.log(`Clink server running on port ${PORT}`)))
+  .catch((err) => { console.error('[startup] Failed to seed admin:', err); process.exit(1); });
