@@ -201,7 +201,8 @@ const server = createServer(async (req, res) => {
       const { callbackUrl: _cb, ...safe } = payment;
       const successUrl = typeof payment.metadata?.successUrl === 'string' ? payment.metadata.successUrl : undefined;
       const cancelUrl = typeof payment.metadata?.cancelUrl === 'string' ? payment.metadata.cancelUrl : undefined;
-      sendJson(res, 200, { ...safe, metadata: undefined, successUrl, cancelUrl });
+      const devMode = payment.metadata?.devMode === true ? true : undefined;
+      sendJson(res, 200, { ...safe, metadata: undefined, successUrl, cancelUrl, devMode });
       return;
     }
 
@@ -312,6 +313,34 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && paymentMatch) {
       const payment = await clink.payments.verify(paymentMatch[1]);
       sendJson(res, 200, payment);
+      return;
+    }
+
+    // POST /dev/payments/:id/settle — testnet only, devMode payments only
+    const devSettleMatch = pathname.match(/^\/dev\/payments\/([^/]+)\/settle$/);
+    if (method === 'POST' && devSettleMatch) {
+      if (process.env.STELLAR_NETWORK !== 'testnet') {
+        sendJson(res, 403, { error: 'DEV_ONLY', message: 'This endpoint is only available on testnet.' });
+        return;
+      }
+      const paymentId = devSettleMatch[1];
+      const payment = paymentRepo.getById(paymentId);
+      if (!payment) {
+        sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
+        return;
+      }
+      if (payment.metadata?.devMode !== true) {
+        sendJson(res, 403, { error: 'DEV_ONLY', message: 'This payment was not created in dev mode.' });
+        return;
+      }
+      if (payment.status === 'settled') {
+        sendJson(res, 200, payment);
+        return;
+      }
+      // Mark as confirmed to bypass Stellar verification, then verify() will settle it
+      paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: `dev_${Date.now()}` });
+      const settled = await clink.payments.verify(paymentId);
+      sendJson(res, 200, settled);
       return;
     }
 
