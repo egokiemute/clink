@@ -13,6 +13,9 @@ import { ClinkError } from './utils/errors';
 
 const ALLOWED_ORIGINS = [
   'https://pay.tryclink.com',
+  'https://tryclink.com',
+  'https://www.tryclink.com',
+  'http://localhost:3000',
   'http://localhost:3001',
 ];
 
@@ -135,9 +138,10 @@ const server = createServer(async (req, res) => {
   const method = req.method ?? 'GET';
 
   try {
+    setCorsHeaders(req, res);
+
     // CORS preflight
     if (method === 'OPTIONS') {
-      setCorsHeaders(req, res);
       res.writeHead(204);
       res.end();
       return;
