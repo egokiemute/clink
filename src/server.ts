@@ -286,6 +286,32 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // GET /admin/merchants/key?email=... — returns full record including secretKey (admin only)
+    if (method === 'GET' && pathname === '/admin/merchants/key') {
+      await authenticateAdmin(req);
+      const email = url.searchParams.get('email');
+      if (!email) {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email query param is required.' });
+        return;
+      }
+      const developer = await developerRepo.getByEmail(email);
+      if (!developer) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Developer not found.' });
+        return;
+      }
+      sendJson(res, 200, developer);
+      return;
+    }
+
+    // DELETE /admin/merchants/:id — remove developer so they can re-register (admin only)
+    const deleteMerchantMatch = pathname.match(/^\/admin\/merchants\/([^/]+)$/);
+    if (method === 'DELETE' && deleteMerchantMatch) {
+      await authenticateAdmin(req);
+      const deleted = await developerRepo.deleteById(deleteMerchantMatch[1]);
+      sendJson(res, 200, { deleted });
+      return;
+    }
+
     // POST /dev/payments/:id/settle — testnet only, devMode payments only, no auth required
     const devSettleMatch = pathname.match(/^\/dev\/payments\/([^/]+)\/settle$/);
     if (method === 'POST' && devSettleMatch) {

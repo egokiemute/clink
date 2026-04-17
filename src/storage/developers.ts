@@ -37,4 +37,10 @@ export class DeveloperRepository {
     const col = await this.col();
     return col.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
   }
+
+  async deleteById(id: string): Promise<boolean> {
+    const col = await this.col();
+    const result = await col.deleteOne({ id });
+    return result.deletedCount > 0;
+  }
 }
