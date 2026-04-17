@@ -79,6 +79,16 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   }
 }
 
+function toPublicPayment(payment: import('./types').Payment): Record<string, unknown> {
+  const { callbackUrl: _cb, metadata, ...safe } = payment;
+  return {
+    ...safe,
+    successUrl: typeof metadata?.successUrl === 'string' ? metadata.successUrl : undefined,
+    cancelUrl: typeof metadata?.cancelUrl === 'string' ? metadata.cancelUrl : undefined,
+    devMode: metadata?.devMode === true ? true : undefined,
+  };
+}
+
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -198,11 +208,7 @@ const server = createServer(async (req, res) => {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
       }
-      const { callbackUrl: _cb, ...safe } = payment;
-      const successUrl = typeof payment.metadata?.successUrl === 'string' ? payment.metadata.successUrl : undefined;
-      const cancelUrl = typeof payment.metadata?.cancelUrl === 'string' ? payment.metadata.cancelUrl : undefined;
-      const devMode = payment.metadata?.devMode === true ? true : undefined;
-      sendJson(res, 200, { ...safe, metadata: undefined, successUrl, cancelUrl, devMode });
+      sendJson(res, 200, toPublicPayment(payment));
       return;
     }
 
@@ -224,12 +230,12 @@ const server = createServer(async (req, res) => {
       });
       const TERMINAL = new Set(['settled', 'expired', 'failed']);
       const sendEvent = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-      sendEvent(initial);
+      sendEvent(toPublicPayment(initial));
       if (TERMINAL.has(initial.status)) { res.end(); return; }
       const interval = setInterval(async () => {
         try {
           const updated = await clink.payments.verify(paymentId);
-          sendEvent(updated);
+          sendEvent(toPublicPayment(updated));
           if (TERMINAL.has(updated.status)) { clearInterval(interval); res.end(); }
         } catch { clearInterval(interval); res.end(); }
       }, 3000);
