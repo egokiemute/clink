@@ -1,0 +1,15 @@
+[_]
+schema-version = "0.3"
+
+[build]
+exclude = [
+  "node_modules",
+  "dist",
+  "coverage",
+  "*.sqlite",
+  "*.sqlite-shm",
+  "*.sqlite-wal",
+  "*.log",
+  ".env",
+  ".env.local"
+]
