@@ -19,7 +19,6 @@ export interface ClinkConfig {
   secretKey: string;
   environment: ClinkEnvironment;
   webhookSecret?: string;
-  databasePath?: string;
   paymentExpiryMinutes?: number;
   stellarSecretKey?: string;
   receivingAddress?: string;

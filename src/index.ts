@@ -1,8 +1,6 @@
-import { resolve } from 'node:path';
-
 import { PaymentsService } from './payments/service';
 import { MockSettlementProvider } from './settlement/mock';
-import { SqlitePaymentRepository } from './storage/sqlite';
+import { MongoPaymentRepository } from './storage/mongo-payments';
 import { StellarClient } from './stellar/client';
 import {
   ClinkConfig,
@@ -23,7 +21,6 @@ interface ResolvedClinkConfig {
   secretKey: string;
   environment: ClinkConfig['environment'];
   webhookSecret: string;
-  databasePath: string;
   paymentExpiryMinutes: number;
   stellarSecretKey?: string;
   receivingAddress?: string;
@@ -56,10 +53,6 @@ class Clink {
       paymentExpiryMinutes:
         config.paymentExpiryMinutes ??
         Number(process.env.CLINK_PAYMENT_EXPIRY_MINUTES ?? '30'),
-      databasePath:
-        config.databasePath ??
-        process.env.CLINK_DATABASE_PATH ??
-        resolve(process.cwd(), 'clink.sqlite'),
       webhookSecret:
         config.webhookSecret ?? process.env.CLINK_WEBHOOK_SECRET ?? config.secretKey,
       stellarSecretKey: config.stellarSecretKey ?? process.env.STELLAR_MASTER_SECRET,
@@ -76,7 +69,7 @@ class Clink {
 
     this.config = resolvedConfig;
 
-    const repository = new SqlitePaymentRepository(this.config.databasePath);
+    const repository = new MongoPaymentRepository();
     const stellarClient = new StellarClient({
       network: this.config.environment,
       secretKey: this.config.stellarSecretKey,
@@ -114,7 +107,7 @@ export default Clink;
 
 export { PaymentsService } from './payments/service';
 export { MockSettlementProvider } from './settlement/mock';
-export { SqlitePaymentRepository } from './storage/sqlite';
+export { MongoPaymentRepository } from './storage/mongo-payments';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';
 export { verifyWebhookSignature } from './webhooks/verify';

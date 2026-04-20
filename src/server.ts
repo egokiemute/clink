@@ -1,5 +1,4 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
 
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -8,7 +7,7 @@ import Clink from './index';
 import { DeveloperService } from './developers/service';
 import { DeveloperRepository } from './storage/developers';
 import { AdminRepository } from './storage/admins';
-import { SqlitePaymentRepository } from './storage/sqlite';
+import { MongoPaymentRepository } from './storage/mongo-payments';
 import { ClinkError } from './utils/errors';
 
 const ALLOWED_ORIGINS = [
@@ -27,18 +26,15 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const dbPath = process.env.CLINK_DATABASE_PATH ?? resolve(process.cwd(), 'clink.sqlite');
-
 const developerRepo = new DeveloperRepository();
 const developerService = new DeveloperService(developerRepo);
 const adminRepo = new AdminRepository();
-const paymentRepo = new SqlitePaymentRepository(dbPath);
+const paymentRepo = new MongoPaymentRepository();
 
 const clink = new Clink({
   secretKey: requireEnv('CLINK_SECRET_KEY'),
   environment: (process.env.STELLAR_NETWORK as 'testnet' | 'mainnet') ?? 'testnet',
   webhookSecret: process.env.CLINK_WEBHOOK_SECRET,
-  databasePath: dbPath,
   paymentExpiryMinutes: Number(process.env.CLINK_PAYMENT_EXPIRY_MINUTES ?? '30'),
   stellarSecretKey: process.env.STELLAR_MASTER_SECRET,
   receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
@@ -205,7 +201,7 @@ const server = createServer(async (req, res) => {
     const publicPayMatch = pathname.match(/^\/pay\/([^/]+)$/);
     if (method === 'GET' && publicPayMatch) {
       setCorsHeaders(req, res);
-      const payment = paymentRepo.getById(publicPayMatch[1]);
+      const payment = await paymentRepo.getById(publicPayMatch[1]);
       if (!payment) {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
@@ -219,7 +215,7 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && sseMatch) {
       setCorsHeaders(req, res);
       const paymentId = sseMatch[1];
-      const initial = paymentRepo.getById(paymentId);
+      const initial = await paymentRepo.getById(paymentId);
       if (!initial) {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
@@ -322,7 +318,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const paymentId = devSettleMatch[1];
-      const payment = paymentRepo.getById(paymentId);
+      const payment = await paymentRepo.getById(paymentId);
       if (!payment) {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
         return;
@@ -336,7 +332,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       // Mark as confirmed to bypass Stellar verification, then verify() will settle it
-      paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: `dev_${Date.now()}` });
+      await paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: `dev_${Date.now()}` });
       const settled = await clink.payments.verify(paymentId);
       sendJson(res, 200, toPublicPayment(settled));
       return;

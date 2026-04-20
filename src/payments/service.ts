@@ -8,7 +8,7 @@ import {
 import { generatePaymentId, generatePaymentMemo } from '../utils/crypto';
 import { ClinkError } from '../utils/errors';
 import { assertValidCreatePaymentParams } from '../utils/validation';
-import { PaymentRepository } from '../storage/sqlite';
+import { PaymentRepository } from '../storage/mongo-payments';
 
 export interface StellarPaymentReader {
   publicKey: string;
@@ -71,11 +71,11 @@ export class PaymentsService {
       ).toISOString(),
     };
 
-    return this.repository.create(payment);
+    return await this.repository.create(payment);
   }
 
   async verify(paymentId: string): Promise<Payment> {
-    const existingPayment = this.repository.getById(paymentId);
+    const existingPayment = await this.repository.getById(paymentId);
 
     if (!existingPayment) {
       throw new ClinkError('PAYMENT_NOT_FOUND', `Payment ${paymentId} was not found.`);
@@ -99,7 +99,7 @@ export class PaymentsService {
 
     if (!matchedPayment.found) {
       if (new Date(existingPayment.expiresAt) <= new Date()) {
-        const expiredPayment = this.mustUpdatePayment(existingPayment.id, {
+        const expiredPayment = await this.mustUpdatePayment(existingPayment.id, {
           status: 'expired',
         });
         await this.dispatchWebhook('payment.expired', expiredPayment);
@@ -109,7 +109,7 @@ export class PaymentsService {
       return existingPayment;
     }
 
-    const confirmedPayment = this.mustUpdatePayment(existingPayment.id, {
+    const confirmedPayment = await this.mustUpdatePayment(existingPayment.id, {
       status: 'confirmed',
       stellarTxHash: matchedPayment.txHash,
     });
@@ -120,14 +120,14 @@ export class PaymentsService {
   }
 
   async list(filters?: ListPaymentsParams): Promise<Payment[]> {
-    return this.repository.list(filters);
+    return await this.repository.list(filters);
   }
 
   private async settlePayment(payment: Payment): Promise<Payment> {
     try {
       const settlement = await this.settlementProvider.settlePayment(payment);
 
-      const settledPayment = this.mustUpdatePayment(payment.id, {
+      const settledPayment = await this.mustUpdatePayment(payment.id, {
         status: 'settled',
         localAmount: settlement.localAmount,
         settledAt: settlement.settledAt,
@@ -139,7 +139,7 @@ export class PaymentsService {
 
       return settledPayment;
     } catch (error) {
-      const failedPayment = this.mustUpdatePayment(payment.id, {
+      const failedPayment = await this.mustUpdatePayment(payment.id, {
         status: 'failed',
         failedAt: new Date().toISOString(),
         failureReason: error instanceof Error ? error.message : 'Settlement failed.',
@@ -151,8 +151,8 @@ export class PaymentsService {
     }
   }
 
-  private mustUpdatePayment(id: string, updates: Partial<Payment>): Payment {
-    const payment = this.repository.update(id, updates);
+  private async mustUpdatePayment(id: string, updates: Partial<Payment>): Promise<Payment> {
+    const payment = await this.repository.update(id, updates);
 
     if (!payment) {
       throw new ClinkError('PAYMENT_NOT_FOUND', `Payment ${id} was not found.`);
