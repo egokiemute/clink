@@ -289,7 +289,6 @@ Authorization: Bearer clink_sk_...
   "description": "Pro plan subscription",
   "customerEmail": "buyer@example.com",
   "stellarTxHash": "abc123...",
-  "callbackUrl": "https://yourapp.com/webhooks/clink",
   "metadata": { "orderId": "order_123" },
   "expiresAt": "2025-01-01T00:30:00.000Z",
   "createdAt": "2025-01-01T00:00:00.000Z",
@@ -426,7 +425,7 @@ function verifySignature(payload: object, signature: string, secret: string): bo
 }
 ```
 
-**Webhook response:** Always return `200` quickly. Clink retries failed deliveries up to 3 times with exponential backoff.
+**Webhook response:** Always return `200` quickly. Clink retries failed deliveries up to 3 times.
 
 ---
 

@@ -81,11 +81,13 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
 
 function toPublicPayment(payment: import('./types').Payment): Record<string, unknown> {
   const { callbackUrl: _cb, metadata, ...safe } = payment;
+  const { successUrl, cancelUrl, devMode, ...publicMetadata } = (metadata ?? {}) as Record<string, unknown>;
   return {
     ...safe,
-    successUrl: typeof metadata?.successUrl === 'string' ? metadata.successUrl : undefined,
-    cancelUrl: typeof metadata?.cancelUrl === 'string' ? metadata.cancelUrl : undefined,
-    devMode: metadata?.devMode === true ? true : undefined,
+    metadata: Object.keys(publicMetadata).length > 0 ? publicMetadata : undefined,
+    successUrl: typeof successUrl === 'string' ? successUrl : undefined,
+    cancelUrl: typeof cancelUrl === 'string' ? cancelUrl : undefined,
+    devMode: devMode === true ? true : undefined,
   };
 }
 
