@@ -220,15 +220,54 @@ const server = createServer(async (req, res) => {
         sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email is required.' });
         return;
       }
+      if (!body.password || typeof body.password !== 'string' || body.password.length < 8) {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'password must be at least 8 characters.' });
+        return;
+      }
       const result = await developerService.register({
         name: body.name,
         email: body.email,
+        password: body.password,
         company: typeof body.company === 'string' ? body.company : undefined,
         businessName: typeof body.businessName === 'string' ? body.businessName : undefined,
         businessType: body.businessType === 'individual' || body.businessType === 'registered_company' ? body.businessType : undefined,
         country: typeof body.country === 'string' ? body.country : undefined,
       });
       sendJson(res, 201, result);
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/developers/login') {
+      const body = await readBody(req) as Record<string, unknown>;
+      if (!body.email || typeof body.email !== 'string') {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'email is required.' });
+        return;
+      }
+      if (!body.password || typeof body.password !== 'string') {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'password is required.' });
+        return;
+      }
+      const developer = await developerRepo.verifyPassword(body.email, body.password);
+      if (!developer) {
+        sendJson(res, 401, { error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
+        return;
+      }
+      if (developer.verificationStatus && developer.verificationStatus !== 'approved') {
+        sendJson(res, 403, { error: 'MERCHANT_NOT_APPROVED', message: 'Your account is pending approval. You will be notified by email once approved.' });
+        return;
+      }
+      sendJson(res, 200, {
+        developer: {
+          id: developer.id,
+          name: developer.name,
+          email: developer.email,
+          company: developer.company,
+          secretKey: developer.secretKey,
+          stellarPublicKey: developer.stellarPublicKey,
+          verificationStatus: developer.verificationStatus,
+          createdAt: developer.createdAt,
+        },
+      });
       return;
     }
 
@@ -349,13 +388,19 @@ const server = createServer(async (req, res) => {
       }
       const { publicKey } = await walletService.provisionWallet(merchantId);
       const updated = await developerRepo.getById(merchantId);
-      await sendMerchantApprovalEmail({
-        to: merchant.email,
-        name: merchant.name,
-        secretKey: merchant.secretKey,
-        stellarPublicKey: publicKey,
-      }).catch((e) => console.error('[email] approval email failed:', e));
-      sendJson(res, 200, { merchant: { ...updated, stellarSecretKeyEncrypted: undefined } });
+      let emailWarning: string | undefined;
+      try {
+        await sendMerchantApprovalEmail({
+          to: merchant.email,
+          name: merchant.name,
+          secretKey: merchant.secretKey,
+          stellarPublicKey: publicKey,
+        });
+      } catch (e) {
+        console.error('[email] approval email failed:', e);
+        emailWarning = 'Merchant approved but approval email could not be sent. Check SMTP configuration.';
+      }
+      sendJson(res, 200, { merchant: { ...updated, stellarSecretKeyEncrypted: undefined }, warning: emailWarning });
       return;
     }
 
@@ -364,7 +409,7 @@ const server = createServer(async (req, res) => {
       await authenticateAdmin(req);
       const merchantId = rejectMerchantMatch[1];
       const body = await readBody(req) as Record<string, unknown>;
-      const reason = typeof body?.reason === 'string' ? body.reason : undefined;
+      const reason = typeof body?.reason === 'string' ? body.reason : typeof body?.note === 'string' ? body.note : undefined;
       const merchant = await developerRepo.getById(merchantId);
       if (!merchant) {
         sendJson(res, 404, { error: 'NOT_FOUND', message: 'Merchant not found.' });

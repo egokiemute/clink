@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { sendApplicationReceivedEmail } from '../mailer';
-import { DeveloperRepository } from '../storage/developers';
+import { DeveloperRepository, hashPassword } from '../storage/developers';
 import { generateSecretKey } from '../utils/crypto';
 import { ClinkError } from '../utils/errors';
 
@@ -11,6 +11,7 @@ export class DeveloperService {
   async register(params: {
     name: string;
     email: string;
+    password: string;
     company?: string;
     businessName?: string;
     businessType?: 'individual' | 'registered_company';
@@ -31,6 +32,7 @@ export class DeveloperService {
       email: params.email,
       company: params.company,
       secretKey: generateSecretKey(),
+      passwordHash: hashPassword(params.password),
       createdAt: new Date().toISOString(),
       businessName: params.businessName,
       businessType: params.businessType,

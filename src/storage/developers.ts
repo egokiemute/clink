@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getDb } from './mongo';
 import { MerchantVerificationStatus } from '../types';
 
@@ -7,6 +8,7 @@ export interface Developer {
   email: string;
   company?: string;
   secretKey: string;
+  passwordHash?: string;
   createdAt: string;
   // KYB
   businessName?: string;
@@ -18,6 +20,10 @@ export interface Developer {
   // Stellar wallet (set on approval)
   stellarPublicKey?: string;
   stellarSecretKeyEncrypted?: string;
+}
+
+export function hashPassword(password: string): string {
+  return createHash('sha256').update(password).digest('hex');
 }
 
 export class DeveloperRepository {
@@ -47,6 +53,12 @@ export class DeveloperRepository {
   async getBySecretKey(secretKey: string): Promise<Developer | null> {
     const col = await this.col();
     const doc = await col.findOne({ secretKey }, { projection: { _id: 0 } });
+    return doc ?? null;
+  }
+
+  async verifyPassword(email: string, password: string): Promise<Developer | null> {
+    const col = await this.col();
+    const doc = await col.findOne({ email, passwordHash: hashPassword(password) }, { projection: { _id: 0 } });
     return doc ?? null;
   }
 
