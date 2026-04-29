@@ -182,15 +182,17 @@ export class StellarClient {
     destination: string;
     amount: string;
     memo?: string;
+    secretKey?: string;
   }): Promise<PaymentResult> {
-    if (!this.keypair) {
+    const keypair = params.secretKey ? Keypair.fromSecret(params.secretKey) : this.keypair;
+    if (!keypair) {
       throw new ClinkError(
         'INVALID_CONFIGURATION',
         'A Stellar secret key is required to send transactions.',
       );
     }
 
-    const sourceAccount = await this.server.loadAccount(this.keypair.publicKey());
+    const sourceAccount = await this.server.loadAccount(keypair.publicKey());
 
     const builder = new TransactionBuilder(sourceAccount, {
       fee: BASE_FEE,
@@ -208,7 +210,7 @@ export class StellarClient {
     }
 
     const transaction = builder.setTimeout(30).build();
-    transaction.sign(this.keypair);
+    transaction.sign(keypair);
 
     try {
       const result = await this.server.submitTransaction(transaction);
@@ -220,6 +222,48 @@ export class StellarClient {
       };
     } catch (error) {
       throw new ClinkError('STELLAR_TRANSACTION_FAILED', 'Failed to submit Stellar transaction.', {
+        cause: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+  }
+
+  async sendXLM(params: {
+    destination: string;
+    amount: string;
+    memo?: string;
+  }): Promise<PaymentResult> {
+    if (!this.keypair) {
+      throw new ClinkError(
+        'INVALID_CONFIGURATION',
+        'A Stellar secret key is required to send transactions.',
+      );
+    }
+
+    const sourceAccount = await this.server.loadAccount(this.keypair.publicKey());
+
+    const builder = new TransactionBuilder(sourceAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    }).addOperation(
+      Operation.payment({
+        destination: params.destination,
+        asset: Asset.native(),
+        amount: params.amount,
+      }),
+    );
+
+    if (params.memo) {
+      builder.addMemo(Memo.text(params.memo));
+    }
+
+    const transaction = builder.setTimeout(30).build();
+    transaction.sign(this.keypair);
+
+    try {
+      const result = await this.server.submitTransaction(transaction);
+      return { txHash: result.hash, ledger: result.ledger, success: true };
+    } catch (error) {
+      throw new ClinkError('STELLAR_TRANSACTION_FAILED', 'Failed to send XLM.', {
         cause: error instanceof Error ? error.message : 'unknown',
       });
     }

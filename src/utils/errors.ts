@@ -7,7 +7,12 @@ export type ClinkErrorCode =
   | 'STELLAR_TRANSACTION_FAILED'
   | 'SETTLEMENT_FAILED'
   | 'WEBHOOK_DELIVERY_FAILED'
-  | 'INVALID_SIGNATURE';
+  | 'INVALID_SIGNATURE'
+  | 'MERCHANT_NOT_APPROVED'
+  | 'WITHDRAWAL_FAILED'
+  | 'BANK_ACCOUNT_NOT_FOUND'
+  | 'INSUFFICIENT_BALANCE'
+  | 'NOT_FOUND';
 
 export class ClinkError extends Error {
   constructor(

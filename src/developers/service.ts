@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { sendApiKeyEmail } from '../mailer';
+import { sendApplicationReceivedEmail } from '../mailer';
 import { DeveloperRepository } from '../storage/developers';
 import { generateSecretKey } from '../utils/crypto';
 import { ClinkError } from '../utils/errors';
@@ -12,13 +12,16 @@ export class DeveloperService {
     name: string;
     email: string;
     company?: string;
-  }): Promise<{ message: string; developer: { id: string; name: string; email: string; company?: string; secretKey: string; createdAt: string } }> {
+    businessName?: string;
+    businessType?: 'individual' | 'registered_company';
+    country?: string;
+  }): Promise<{ message: string; developer: { id: string; name: string; email: string; company?: string; verificationStatus: string; createdAt: string } }> {
     const existing = await this.repo.getByEmail(params.email);
 
     if (existing) {
       throw new ClinkError(
         'INVALID_PAYMENT_REQUEST',
-        'An API key has already been issued to this email address.',
+        'An account already exists for this email address.',
       );
     }
 
@@ -29,22 +32,22 @@ export class DeveloperService {
       company: params.company,
       secretKey: generateSecretKey(),
       createdAt: new Date().toISOString(),
+      businessName: params.businessName,
+      businessType: params.businessType,
+      country: params.country,
+      verificationStatus: 'pending',
     });
 
-    await sendApiKeyEmail({
-      to: developer.email,
-      name: developer.name,
-      secretKey: developer.secretKey,
-    });
+    await sendApplicationReceivedEmail({ to: developer.email, name: developer.name });
 
     return {
-      message: 'Account created. Copy your secret key — it will not be shown again.',
+      message: 'Application received. You will be notified by email once your account is approved.',
       developer: {
         id: developer.id,
         name: developer.name,
         email: developer.email,
         company: developer.company,
-        secretKey: developer.secretKey,
+        verificationStatus: developer.verificationStatus,
         createdAt: developer.createdAt,
       },
     };

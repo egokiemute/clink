@@ -1,4 +1,5 @@
 import { getDb } from './mongo';
+import { MerchantVerificationStatus } from '../types';
 
 export interface Developer {
   id: string;
@@ -7,6 +8,16 @@ export interface Developer {
   company?: string;
   secretKey: string;
   createdAt: string;
+  // KYB
+  businessName?: string;
+  businessType?: 'individual' | 'registered_company';
+  country?: string;
+  verificationStatus: MerchantVerificationStatus;
+  verificationNote?: string;
+  verifiedAt?: string;
+  // Stellar wallet (set on approval)
+  stellarPublicKey?: string;
+  stellarSecretKeyEncrypted?: string;
 }
 
 export class DeveloperRepository {
@@ -19,6 +30,12 @@ export class DeveloperRepository {
     const col = await this.col();
     await col.insertOne({ ...developer });
     return developer;
+  }
+
+  async getById(id: string): Promise<Developer | null> {
+    const col = await this.col();
+    const doc = await col.findOne({ id }, { projection: { _id: 0 } });
+    return doc ?? null;
   }
 
   async getByEmail(email: string): Promise<Developer | null> {
@@ -36,6 +53,21 @@ export class DeveloperRepository {
   async getAll(): Promise<Developer[]> {
     const col = await this.col();
     return col.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+  }
+
+  async getByStatus(status: MerchantVerificationStatus): Promise<Developer[]> {
+    const col = await this.col();
+    return col.find({ verificationStatus: status }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+  }
+
+  async update(id: string, updates: Partial<Developer>): Promise<Developer | null> {
+    const col = await this.col();
+    const result = await col.findOneAndUpdate(
+      { id },
+      { $set: updates },
+      { returnDocument: 'after', projection: { _id: 0 } },
+    );
+    return result ?? null;
   }
 
   async deleteById(id: string): Promise<boolean> {

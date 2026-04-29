@@ -48,14 +48,14 @@ export class PaymentsService {
     private readonly options: PaymentsServiceOptions,
   ) {}
 
-  async create(params: CreatePaymentParams): Promise<Payment> {
+  async create(params: CreatePaymentParams & { merchantStellarAddress?: string }): Promise<Payment> {
     assertValidCreatePaymentParams(params);
 
     const createdAt = new Date();
     const paymentId = generatePaymentId();
     const payment: Payment = {
       id: paymentId,
-      stellarAddress: this.stellarClient.publicKey,
+      stellarAddress: params.merchantStellarAddress ?? this.stellarClient.publicKey,
       memo: generatePaymentMemo(paymentId),
       amount: params.amount,
       currency: params.currency,
@@ -65,6 +65,7 @@ export class PaymentsService {
       status: 'pending',
       callbackUrl: params.callbackUrl,
       metadata: params.metadata,
+      merchantId: params.merchantId,
       createdAt: createdAt.toISOString(),
       expiresAt: new Date(
         createdAt.getTime() + this.options.paymentExpiryMinutes * 60_000,

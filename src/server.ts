@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -8,7 +9,18 @@ import { DeveloperService } from './developers/service';
 import { DeveloperRepository } from './storage/developers';
 import { AdminRepository } from './storage/admins';
 import { MongoPaymentRepository } from './storage/mongo-payments';
+import { BankAccountRepository } from './storage/bankAccounts';
+import { WithdrawalRepository } from './storage/withdrawals';
+import { MerchantWalletService } from './merchants/walletService';
+import { WithdrawalService } from './merchants/withdrawalService';
+import { MultiCurrencyPayoutProvider } from './settlement/payoutProvider';
+import { StellarClient } from './stellar/client';
 import { ClinkError } from './utils/errors';
+import { Developer } from './storage/developers';
+import {
+  sendMerchantApprovalEmail,
+  sendMerchantRejectionEmail,
+} from './mailer';
 
 const ALLOWED_ORIGINS = [
   'https://pay.tryclink.com',
@@ -30,6 +42,34 @@ const developerRepo = new DeveloperRepository();
 const developerService = new DeveloperService(developerRepo);
 const adminRepo = new AdminRepository();
 const paymentRepo = new MongoPaymentRepository();
+const bankAccountRepo = new BankAccountRepository();
+const withdrawalRepo = new WithdrawalRepository();
+
+const stellarClient = new StellarClient({
+  network: (process.env.STELLAR_NETWORK as 'testnet' | 'mainnet') ?? 'testnet',
+  secretKey: process.env.STELLAR_MASTER_SECRET,
+  receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
+  horizonUrl: process.env.STELLAR_HORIZON_URL,
+});
+
+const walletService = new MerchantWalletService(
+  developerRepo,
+  stellarClient,
+  (process.env.STELLAR_NETWORK as 'testnet' | 'mainnet') ?? 'testnet',
+);
+
+const payoutProvider = new MultiCurrencyPayoutProvider(
+  process.env.PAYSTACK_SECRET_KEY ?? '',
+  process.env.FLUTTERWAVE_SECRET_KEY ?? '',
+);
+
+const withdrawalService = new WithdrawalService(
+  developerRepo,
+  bankAccountRepo,
+  withdrawalRepo,
+  stellarClient,
+  payoutProvider,
+);
 
 const clink = new Clink({
   secretKey: requireEnv('CLINK_SECRET_KEY'),
@@ -41,7 +81,6 @@ const clink = new Clink({
   stellarHorizonUrl: process.env.STELLAR_HORIZON_URL,
 });
 
-// Seed admin credentials from env on startup
 async function seedAdmin() {
   const email = process.env.ADMIN_USER;
   const password = process.env.ADMIN_PASSWORD;
@@ -70,7 +109,7 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   const origin = req.headers['origin'];
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
   }
 }
@@ -108,9 +147,14 @@ function errorCodeToStatus(code: ClinkError['code']): number {
     case 'INVALID_API_KEY': return 401;
     case 'INVALID_PAYMENT_REQUEST':
     case 'INVALID_CONFIGURATION': return 400;
-    case 'PAYMENT_NOT_FOUND': return 404;
+    case 'PAYMENT_NOT_FOUND':
+    case 'BANK_ACCOUNT_NOT_FOUND':
+    case 'NOT_FOUND': return 404;
     case 'PAYMENT_EXPIRED': return 410;
     case 'INVALID_SIGNATURE': return 401;
+    case 'MERCHANT_NOT_APPROVED': return 403;
+    case 'INSUFFICIENT_BALANCE': return 422;
+    case 'WITHDRAWAL_FAILED': return 502;
     default: return 500;
   }
 }
@@ -122,7 +166,7 @@ function extractSecretKey(req: IncomingMessage): string | undefined {
     : req.headers['x-api-key'] as string | undefined;
 }
 
-async function authenticate(req: IncomingMessage): Promise<void> {
+async function authenticate(req: IncomingMessage): Promise<Developer> {
   const secretKey = extractSecretKey(req);
   if (!secretKey) {
     throw new ClinkError('INVALID_API_KEY', 'Missing API key. Pass it as Authorization: Bearer <key> or x-api-key header.');
@@ -131,6 +175,11 @@ async function authenticate(req: IncomingMessage): Promise<void> {
   if (!developer) {
     throw new ClinkError('INVALID_API_KEY', 'Invalid API key.');
   }
+  // Pre-KYB merchants have no verificationStatus — treat as approved for backward compat
+  if (developer.verificationStatus && developer.verificationStatus !== 'approved') {
+    throw new ClinkError('MERCHANT_NOT_APPROVED', 'Your account is pending approval. You will be notified by email once approved.');
+  }
+  return developer;
 }
 
 async function authenticateAdmin(req: IncomingMessage): Promise<void> {
@@ -148,20 +197,19 @@ const server = createServer(async (req, res) => {
   try {
     setCorsHeaders(req, res);
 
-    // CORS preflight
     if (method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
       return;
     }
 
-    // GET /health
+    // ── Public ────────────────────────────────────────────────────────────
+
     if (method === 'GET' && pathname === '/health') {
       sendJson(res, 200, { status: 'ok' });
       return;
     }
 
-    // POST /developers/register — public
     if (method === 'POST' && pathname === '/developers/register') {
       const body = await readBody(req) as Record<string, unknown>;
       if (!body.name || typeof body.name !== 'string') {
@@ -176,12 +224,14 @@ const server = createServer(async (req, res) => {
         name: body.name,
         email: body.email,
         company: typeof body.company === 'string' ? body.company : undefined,
+        businessName: typeof body.businessName === 'string' ? body.businessName : undefined,
+        businessType: body.businessType === 'individual' || body.businessType === 'registered_company' ? body.businessType : undefined,
+        country: typeof body.country === 'string' ? body.country : undefined,
       });
       sendJson(res, 201, result);
       return;
     }
 
-    // POST /admin/login — validates email + password, returns admin token
     if (method === 'POST' && pathname === '/admin/login') {
       const body = await readBody(req) as Record<string, unknown>;
       if (!body.email || !body.password) {
@@ -197,10 +247,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /pay/:id — public
     const publicPayMatch = pathname.match(/^\/pay\/([^/]+)$/);
     if (method === 'GET' && publicPayMatch) {
-      setCorsHeaders(req, res);
       const payment = await paymentRepo.getById(publicPayMatch[1]);
       if (!payment) {
         sendJson(res, 404, { error: 'PAYMENT_NOT_FOUND', message: 'Payment not found.' });
@@ -210,10 +258,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /pay/:id/stream — SSE
     const sseMatch = pathname.match(/^\/pay\/([^/]+)\/stream$/);
     if (method === 'GET' && sseMatch) {
-      setCorsHeaders(req, res);
       const paymentId = sseMatch[1];
       const initial = await paymentRepo.getById(paymentId);
       if (!initial) {
@@ -241,7 +287,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // POST /webhooks/clink — verified by signature
     if (method === 'POST' && pathname === '/webhooks/clink') {
       const body = await readBody(req) as Record<string, unknown>;
       const signature = req.headers['x-clink-signature'] as string | undefined;
@@ -256,35 +301,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /me — merchant profile
-    if (method === 'GET' && pathname === '/me') {
-      const secretKey = extractSecretKey(req);
-      if (!secretKey) throw new ClinkError('INVALID_API_KEY', 'Missing API key.');
-      const developer = await developerRepo.getBySecretKey(secretKey);
-      if (!developer) throw new ClinkError('INVALID_API_KEY', 'Invalid API key.');
-      sendJson(res, 200, developer);
-      return;
-    }
+    // ── Admin ─────────────────────────────────────────────────────────────
 
-    // GET /admin/payments
     if (method === 'GET' && pathname === '/admin/payments') {
       await authenticateAdmin(req);
       const status = url.searchParams.get('status') as 'pending' | 'confirmed' | 'settled' | 'expired' | 'failed' | undefined;
       const limit = url.searchParams.get('limit');
-      const payments = await clink.payments.list({ status: status ?? undefined, limit: limit ? Number(limit) : undefined });
+      const payments = await paymentRepo.list({ status: status ?? undefined, limit: limit ? Number(limit) : undefined });
       sendJson(res, 200, payments);
       return;
     }
 
-    // GET /admin/merchants
     if (method === 'GET' && pathname === '/admin/merchants') {
       await authenticateAdmin(req);
-      const merchants = (await developerRepo.getAll()).map(({ secretKey: _sk, ...m }) => m);
-      sendJson(res, 200, merchants);
+      const status = url.searchParams.get('status') as 'pending' | 'approved' | 'rejected' | undefined;
+      const merchants = status
+        ? await developerRepo.getByStatus(status)
+        : await developerRepo.getAll();
+      sendJson(res, 200, merchants.map(({ secretKey: _sk, stellarSecretKeyEncrypted: _enc, ...m }) => m));
       return;
     }
 
-    // GET /admin/merchants/key?email=... — returns full record including secretKey (admin only)
     if (method === 'GET' && pathname === '/admin/merchants/key') {
       await authenticateAdmin(req);
       const email = url.searchParams.get('email');
@@ -301,7 +338,51 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // DELETE /admin/merchants/:id — remove developer so they can re-register (admin only)
+    const approveMerchantMatch = pathname.match(/^\/admin\/merchants\/([^/]+)\/approve$/);
+    if (method === 'POST' && approveMerchantMatch) {
+      await authenticateAdmin(req);
+      const merchantId = approveMerchantMatch[1];
+      const merchant = await developerRepo.getById(merchantId);
+      if (!merchant) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Merchant not found.' });
+        return;
+      }
+      const { publicKey } = await walletService.provisionWallet(merchantId);
+      const updated = await developerRepo.getById(merchantId);
+      await sendMerchantApprovalEmail({
+        to: merchant.email,
+        name: merchant.name,
+        secretKey: merchant.secretKey,
+        stellarPublicKey: publicKey,
+      }).catch((e) => console.error('[email] approval email failed:', e));
+      sendJson(res, 200, { merchant: { ...updated, stellarSecretKeyEncrypted: undefined } });
+      return;
+    }
+
+    const rejectMerchantMatch = pathname.match(/^\/admin\/merchants\/([^/]+)\/reject$/);
+    if (method === 'POST' && rejectMerchantMatch) {
+      await authenticateAdmin(req);
+      const merchantId = rejectMerchantMatch[1];
+      const body = await readBody(req) as Record<string, unknown>;
+      const reason = typeof body?.reason === 'string' ? body.reason : undefined;
+      const merchant = await developerRepo.getById(merchantId);
+      if (!merchant) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Merchant not found.' });
+        return;
+      }
+      const updated = await developerRepo.update(merchantId, {
+        verificationStatus: 'rejected',
+        verificationNote: reason,
+      });
+      await sendMerchantRejectionEmail({
+        to: merchant.email,
+        name: merchant.name,
+        reason,
+      }).catch((e) => console.error('[email] rejection email failed:', e));
+      sendJson(res, 200, { merchant: updated });
+      return;
+    }
+
     const deleteMerchantMatch = pathname.match(/^\/admin\/merchants\/([^/]+)$/);
     if (method === 'DELETE' && deleteMerchantMatch) {
       await authenticateAdmin(req);
@@ -310,7 +391,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // POST /dev/payments/:id/settle — testnet only, devMode payments only, no auth required
+    // ── Dev / testnet ─────────────────────────────────────────────────────
+
     const devSettleMatch = pathname.match(/^\/dev\/payments\/([^/]+)\/settle$/);
     if (method === 'POST' && devSettleMatch) {
       if (process.env.STELLAR_NETWORK !== 'testnet') {
@@ -331,17 +413,22 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, toPublicPayment(payment));
         return;
       }
-      // Mark as confirmed to bypass Stellar verification, then verify() will settle it
       await paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: `dev_${Date.now()}` });
       const settled = await clink.payments.verify(paymentId);
       sendJson(res, 200, toPublicPayment(settled));
       return;
     }
 
-    // All routes below require a valid merchant API key
-    await authenticate(req);
+    // ── Merchant authenticated ─────────────────────────────────────────────
 
-    // POST /payments
+    const developer = await authenticate(req);
+
+    if (method === 'GET' && pathname === '/me') {
+      const { stellarSecretKeyEncrypted: _enc, ...safe } = developer;
+      sendJson(res, 200, safe);
+      return;
+    }
+
     if (method === 'POST' && pathname === '/payments') {
       const body = await readBody(req) as Record<string, unknown>;
       const payment = await clink.payments.create({
@@ -352,25 +439,127 @@ const server = createServer(async (req, res) => {
         customerEmail: body.customerEmail as string | undefined,
         callbackUrl: body.callbackUrl as string,
         metadata: body.metadata as Record<string, unknown> | undefined,
+        merchantId: developer.id,
+        merchantStellarAddress: developer.stellarPublicKey,
       });
       sendJson(res, 201, payment);
       return;
     }
 
-    // GET /payments
     if (method === 'GET' && pathname === '/payments') {
       const status = url.searchParams.get('status') as 'pending' | 'confirmed' | 'settled' | 'expired' | 'failed' | undefined;
       const limit = url.searchParams.get('limit');
-      const payments = await clink.payments.list({ status: status ?? undefined, limit: limit ? Number(limit) : undefined });
+      const payments = await paymentRepo.list({
+        status: status ?? undefined,
+        limit: limit ? Number(limit) : undefined,
+        merchantId: developer.id,
+      });
       sendJson(res, 200, payments);
       return;
     }
 
-    // GET /payments/:id
     const paymentMatch = pathname.match(/^\/payments\/([^/]+)$/);
     if (method === 'GET' && paymentMatch) {
       const payment = await clink.payments.verify(paymentMatch[1]);
       sendJson(res, 200, payment);
+      return;
+    }
+
+    // ── Bank accounts ──────────────────────────────────────────────────────
+
+    if (method === 'GET' && pathname === '/bank-accounts') {
+      const accounts = await bankAccountRepo.getByMerchantId(developer.id);
+      sendJson(res, 200, accounts);
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/bank-accounts') {
+      const body = await readBody(req) as Record<string, unknown>;
+      const currency = body.currency as 'NGN' | 'GHS' | 'KES' | 'UGX';
+      const bankCode = body.bankCode as string;
+      const accountNumber = body.accountNumber as string;
+      if (!currency || !bankCode || !accountNumber || !body.bankName) {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'currency, bankCode, accountNumber, bankName are required.' });
+        return;
+      }
+      const { accountName } = await payoutProvider.resolveBankAccount({ bankCode, accountNumber, currency });
+      const existing = await bankAccountRepo.getByMerchantId(developer.id);
+      const account = {
+        id: `ba_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+        merchantId: developer.id,
+        currency,
+        bankName: body.bankName as string,
+        bankCode,
+        accountNumber,
+        accountName,
+        isVerified: true,
+        isPrimary: existing.length === 0,
+        createdAt: new Date().toISOString(),
+      };
+      await bankAccountRepo.create(account);
+      sendJson(res, 201, account);
+      return;
+    }
+
+    const setPrimaryMatch = pathname.match(/^\/bank-accounts\/([^/]+)\/set-primary$/);
+    if (method === 'POST' && setPrimaryMatch) {
+      await bankAccountRepo.setPrimary(developer.id, setPrimaryMatch[1]);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    const deleteBankMatch = pathname.match(/^\/bank-accounts\/([^/]+)$/);
+    if (method === 'DELETE' && deleteBankMatch) {
+      const deleted = await bankAccountRepo.deleteById(deleteBankMatch[1], developer.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'BANK_ACCOUNT_NOT_FOUND', message: 'Bank account not found.' });
+        return;
+      }
+      sendJson(res, 200, { deleted: true });
+      return;
+    }
+
+    // ── Withdrawals ────────────────────────────────────────────────────────
+
+    if (method === 'POST' && pathname === '/withdrawals') {
+      const body = await readBody(req) as Record<string, unknown>;
+      if (!body.usdcAmount || typeof body.usdcAmount !== 'number') {
+        sendJson(res, 400, { error: 'VALIDATION_ERROR', message: 'usdcAmount is required.' });
+        return;
+      }
+      let bankAccountId = body.bankAccountId as string | undefined;
+      if (!bankAccountId) {
+        const accounts = await bankAccountRepo.getByMerchantId(developer.id);
+        const primary = accounts.find((a) => a.isPrimary) ?? accounts[0];
+        if (!primary) {
+          sendJson(res, 400, { error: 'BANK_ACCOUNT_NOT_FOUND', message: 'No bank account on file. Add one first.' });
+          return;
+        }
+        bankAccountId = primary.id;
+      }
+      const withdrawal = await withdrawalService.executeWithdrawal({
+        merchantId: developer.id,
+        bankAccountId,
+        usdcAmount: body.usdcAmount,
+      });
+      sendJson(res, 201, withdrawal);
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/withdrawals') {
+      const withdrawals = await withdrawalRepo.getByMerchantId(developer.id);
+      sendJson(res, 200, withdrawals);
+      return;
+    }
+
+    const withdrawalMatch = pathname.match(/^\/withdrawals\/([^/]+)$/);
+    if (method === 'GET' && withdrawalMatch) {
+      const withdrawal = await withdrawalRepo.getById(withdrawalMatch[1]);
+      if (!withdrawal || withdrawal.merchantId !== developer.id) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Withdrawal not found.' });
+        return;
+      }
+      sendJson(res, 200, withdrawal);
       return;
     }
 

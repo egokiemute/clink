@@ -39,6 +39,7 @@ export class MongoPaymentRepository implements PaymentRepository {
     const col = await this.col();
     const query: Record<string, unknown> = {};
     if (filters.status) query.status = filters.status;
+    if (filters.merchantId) query.merchantId = filters.merchantId;
     return col
       .find(query, { projection: { _id: 0 } })
       .sort({ createdAt: -1 })

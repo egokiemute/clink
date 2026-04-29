@@ -1,5 +1,5 @@
 import { PaymentsService } from './payments/service';
-import { MockSettlementProvider } from './settlement/mock';
+import { PaystackSettlementProvider } from './settlement/paystackSettlement';
 import { MongoPaymentRepository } from './storage/mongo-payments';
 import { StellarClient } from './stellar/client';
 import {
@@ -29,7 +29,7 @@ interface ResolvedClinkConfig {
 
 class Clink {
   public readonly payments: {
-    create: (params: CreatePaymentParams) => Promise<Payment>;
+    create: (params: CreatePaymentParams & { merchantStellarAddress?: string }) => Promise<Payment>;
     verify: (paymentId: string) => Promise<Payment>;
     list: (filters?: ListPaymentsParams) => Promise<Payment[]>;
   };
@@ -76,7 +76,9 @@ class Clink {
       receivingAddress: this.config.receivingAddress,
       horizonUrl: this.config.stellarHorizonUrl,
     });
-    const settlementProvider = new MockSettlementProvider();
+    const settlementProvider = new PaystackSettlementProvider(
+      process.env.PAYSTACK_SECRET_KEY ?? '',
+    );
     const webhookDispatcher = new HttpWebhookDispatcher({
       secret: this.config.webhookSecret,
     });
@@ -106,7 +108,7 @@ class Clink {
 export default Clink;
 
 export { PaymentsService } from './payments/service';
-export { MockSettlementProvider } from './settlement/mock';
+export { PaystackSettlementProvider } from './settlement/paystackSettlement';
 export { MongoPaymentRepository } from './storage/mongo-payments';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';
