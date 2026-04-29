@@ -458,7 +458,21 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, toPublicPayment(payment));
         return;
       }
-      await paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: `dev_${Date.now()}` });
+      const funderSecret = process.env.STELLAR_FUNDER_SECRET;
+      if (!funderSecret) {
+        sendJson(res, 503, { error: 'NOT_CONFIGURED', message: 'STELLAR_FUNDER_SECRET is not set. Run scripts/setup-testnet-funder.ts.' });
+        return;
+      }
+      const funderClient = new StellarClient({
+        network: 'testnet',
+        secretKey: funderSecret,
+      });
+      const txResult = await funderClient.sendUSDC({
+        destination: payment.stellarAddress,
+        amount: payment.amount.toFixed(7),
+        memo: payment.memo,
+      });
+      await paymentRepo.update(paymentId, { status: 'confirmed', stellarTxHash: txResult.txHash });
       const settled = await clink.payments.verify(paymentId);
       sendJson(res, 200, toPublicPayment(settled));
       return;
