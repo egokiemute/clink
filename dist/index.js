@@ -86,4 +86,10 @@ Object.defineProperty(exports, "ClinkError", { enumerable: true, get: function (
 var verify_2 = require("./webhooks/verify");
 Object.defineProperty(exports, "verifyWebhookSignature", { enumerable: true, get: function () { return verify_2.verifyWebhookSignature; } });
 __exportStar(require("./types"), exports);
+// When this module is executed directly (e.g. `node dist/index.js`) rather than
+// imported as a library, boot the HTTP server. Keeps the deploy working even if
+// the host's start command points here instead of dist/server.js.
+if (require.main === module) {
+    require('./server');
+}
 //# sourceMappingURL=index.js.map

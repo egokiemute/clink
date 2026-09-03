@@ -114,3 +114,10 @@ export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';
 export { verifyWebhookSignature } from './webhooks/verify';
 export * from './types';
+
+// When this module is executed directly (e.g. `node dist/index.js`) rather than
+// imported as a library, boot the HTTP server. Keeps the deploy working even if
+// the host's start command points here instead of dist/server.js.
+if (require.main === module) {
+  require('./server');
+}
