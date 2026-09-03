@@ -16,7 +16,6 @@ async function main() {
     secretKey: process.env.CLINK_SECRET_KEY ?? 'clink_sk_test_example',
     environment: (process.env.STELLAR_NETWORK as 'testnet' | 'mainnet') ?? 'testnet',
     webhookSecret: process.env.CLINK_WEBHOOK_SECRET,
-    databasePath: process.env.CLINK_DATABASE_PATH ?? ':memory:',
     stellarSecretKey: process.env.STELLAR_MASTER_SECRET,
     receivingAddress: process.env.STELLAR_RECEIVING_ADDRESS,
     stellarHorizonUrl: process.env.STELLAR_HORIZON_URL,

@@ -23,7 +23,7 @@ class PaymentsService {
         const paymentId = (0, crypto_1.generatePaymentId)();
         const payment = {
             id: paymentId,
-            stellarAddress: this.stellarClient.publicKey,
+            stellarAddress: params.merchantStellarAddress ?? this.stellarClient.publicKey,
             memo: (0, crypto_1.generatePaymentMemo)(paymentId),
             amount: params.amount,
             currency: params.currency,
@@ -33,13 +33,14 @@ class PaymentsService {
             status: 'pending',
             callbackUrl: params.callbackUrl,
             metadata: params.metadata,
+            merchantId: params.merchantId,
             createdAt: createdAt.toISOString(),
             expiresAt: new Date(createdAt.getTime() + this.options.paymentExpiryMinutes * 60_000).toISOString(),
         };
-        return this.repository.create(payment);
+        return await this.repository.create(payment);
     }
     async verify(paymentId) {
-        const existingPayment = this.repository.getById(paymentId);
+        const existingPayment = await this.repository.getById(paymentId);
         if (!existingPayment) {
             throw new errors_1.ClinkError('PAYMENT_NOT_FOUND', `Payment ${paymentId} was not found.`);
         }
@@ -58,7 +59,7 @@ class PaymentsService {
         });
         if (!matchedPayment.found) {
             if (new Date(existingPayment.expiresAt) <= new Date()) {
-                const expiredPayment = this.mustUpdatePayment(existingPayment.id, {
+                const expiredPayment = await this.mustUpdatePayment(existingPayment.id, {
                     status: 'expired',
                 });
                 await this.dispatchWebhook('payment.expired', expiredPayment);
@@ -66,7 +67,7 @@ class PaymentsService {
             }
             return existingPayment;
         }
-        const confirmedPayment = this.mustUpdatePayment(existingPayment.id, {
+        const confirmedPayment = await this.mustUpdatePayment(existingPayment.id, {
             status: 'confirmed',
             stellarTxHash: matchedPayment.txHash,
         });
@@ -74,12 +75,12 @@ class PaymentsService {
         return this.settlePayment(confirmedPayment);
     }
     async list(filters) {
-        return this.repository.list(filters);
+        return await this.repository.list(filters);
     }
     async settlePayment(payment) {
         try {
             const settlement = await this.settlementProvider.settlePayment(payment);
-            const settledPayment = this.mustUpdatePayment(payment.id, {
+            const settledPayment = await this.mustUpdatePayment(payment.id, {
                 status: 'settled',
                 localAmount: settlement.localAmount,
                 settledAt: settlement.settledAt,
@@ -90,7 +91,7 @@ class PaymentsService {
             return settledPayment;
         }
         catch (error) {
-            const failedPayment = this.mustUpdatePayment(payment.id, {
+            const failedPayment = await this.mustUpdatePayment(payment.id, {
                 status: 'failed',
                 failedAt: new Date().toISOString(),
                 failureReason: error instanceof Error ? error.message : 'Settlement failed.',
@@ -99,8 +100,8 @@ class PaymentsService {
             return failedPayment;
         }
     }
-    mustUpdatePayment(id, updates) {
-        const payment = this.repository.update(id, updates);
+    async mustUpdatePayment(id, updates) {
+        const payment = await this.repository.update(id, updates);
         if (!payment) {
             throw new errors_1.ClinkError('PAYMENT_NOT_FOUND', `Payment ${id} was not found.`);
         }

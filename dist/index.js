@@ -14,11 +14,10 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyWebhookSignature = exports.ClinkError = exports.StellarClient = exports.SqlitePaymentRepository = exports.MockSettlementProvider = exports.PaymentsService = void 0;
-const node_path_1 = require("node:path");
+exports.verifyWebhookSignature = exports.ClinkError = exports.StellarClient = exports.PgPaymentRepository = exports.PaystackSettlementProvider = exports.PaymentsService = void 0;
 const service_1 = require("./payments/service");
-const mock_1 = require("./settlement/mock");
-const sqlite_1 = require("./storage/sqlite");
+const paystackSettlement_1 = require("./settlement/paystackSettlement");
+const payments_1 = require("./storage/payments");
 const client_1 = require("./stellar/client");
 const errors_1 = require("./utils/errors");
 const validation_1 = require("./utils/validation");
@@ -39,9 +38,6 @@ class Clink {
             environment: config.environment,
             paymentExpiryMinutes: config.paymentExpiryMinutes ??
                 Number(process.env.CLINK_PAYMENT_EXPIRY_MINUTES ?? '30'),
-            databasePath: config.databasePath ??
-                process.env.CLINK_DATABASE_PATH ??
-                (0, node_path_1.resolve)(process.cwd(), 'clink.sqlite'),
             webhookSecret: config.webhookSecret ?? process.env.CLINK_WEBHOOK_SECRET ?? config.secretKey,
             stellarSecretKey: config.stellarSecretKey ?? process.env.STELLAR_MASTER_SECRET,
             receivingAddress: config.receivingAddress ?? process.env.STELLAR_RECEIVING_ADDRESS,
@@ -51,14 +47,14 @@ class Clink {
             throw new errors_1.ClinkError('INVALID_CONFIGURATION', 'paymentExpiryMinutes must be greater than zero.');
         }
         this.config = resolvedConfig;
-        const repository = new sqlite_1.SqlitePaymentRepository(this.config.databasePath);
+        const repository = new payments_1.PgPaymentRepository();
         const stellarClient = new client_1.StellarClient({
             network: this.config.environment,
             secretKey: this.config.stellarSecretKey,
             receivingAddress: this.config.receivingAddress,
             horizonUrl: this.config.stellarHorizonUrl,
         });
-        const settlementProvider = new mock_1.MockSettlementProvider();
+        const settlementProvider = new paystackSettlement_1.PaystackSettlementProvider(process.env.PAYSTACK_SECRET_KEY ?? '');
         const webhookDispatcher = new deliver_1.HttpWebhookDispatcher({
             secret: this.config.webhookSecret,
         });
@@ -79,10 +75,10 @@ class Clink {
 exports.default = Clink;
 var service_2 = require("./payments/service");
 Object.defineProperty(exports, "PaymentsService", { enumerable: true, get: function () { return service_2.PaymentsService; } });
-var mock_2 = require("./settlement/mock");
-Object.defineProperty(exports, "MockSettlementProvider", { enumerable: true, get: function () { return mock_2.MockSettlementProvider; } });
-var sqlite_2 = require("./storage/sqlite");
-Object.defineProperty(exports, "SqlitePaymentRepository", { enumerable: true, get: function () { return sqlite_2.SqlitePaymentRepository; } });
+var paystackSettlement_2 = require("./settlement/paystackSettlement");
+Object.defineProperty(exports, "PaystackSettlementProvider", { enumerable: true, get: function () { return paystackSettlement_2.PaystackSettlementProvider; } });
+var payments_2 = require("./storage/payments");
+Object.defineProperty(exports, "PgPaymentRepository", { enumerable: true, get: function () { return payments_2.PgPaymentRepository; } });
 var client_2 = require("./stellar/client");
 Object.defineProperty(exports, "StellarClient", { enumerable: true, get: function () { return client_2.StellarClient; } });
 var errors_2 = require("./utils/errors");

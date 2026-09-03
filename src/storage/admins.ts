@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getDb } from './mongo';
+import { query } from './pg';
 
 export interface Admin {
   email: string;
@@ -12,25 +12,21 @@ function hash(password: string): string {
 }
 
 export class AdminRepository {
-  private async col() {
-    const db = await getDb();
-    return db.collection<Admin>('admins');
-  }
-
   async seed(email: string, password: string): Promise<void> {
-    const col = await this.col();
-    await col.createIndex({ email: 1 }, { unique: true });
-    await col.updateOne(
-      { email },
-      { $set: { email, passwordHash: hash(password), createdAt: new Date().toISOString() } },
-      { upsert: true },
+    await query(
+      `INSERT INTO admins (email, password_hash, created_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+      [email, hash(password), new Date().toISOString()],
     );
   }
 
   async verify(email: string, password: string): Promise<boolean> {
-    const col = await this.col();
-    const admin = await col.findOne({ email });
-    if (!admin) return false;
-    return admin.passwordHash === hash(password);
+    const { rows } = await query<{ password_hash: string }>(
+      `SELECT password_hash FROM admins WHERE email = $1`,
+      [email],
+    );
+    if (rows.length === 0) return false;
+    return rows[0].password_hash === hash(password);
   }
 }

@@ -2,11 +2,12 @@ export type ClinkEnvironment = 'testnet' | 'mainnet';
 export type LocalCurrency = 'NGN' | 'GHS' | 'KES' | 'UGX';
 export type PaymentStatus = 'pending' | 'confirmed' | 'settled' | 'expired' | 'failed';
 export type WebhookEvent = 'payment.confirmed' | 'payment.settled' | 'payment.failed' | 'payment.expired';
+export type MerchantVerificationStatus = 'pending' | 'approved' | 'rejected';
+export type WithdrawalStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export interface ClinkConfig {
     secretKey: string;
     environment: ClinkEnvironment;
     webhookSecret?: string;
-    databasePath?: string;
     paymentExpiryMinutes?: number;
     stellarSecretKey?: string;
     receivingAddress?: string;
@@ -20,6 +21,8 @@ export interface CreatePaymentParams {
     customerEmail?: string;
     callbackUrl: string;
     metadata?: Record<string, unknown>;
+    merchantId?: string;
+    merchantStellarAddress?: string;
 }
 export interface Payment {
     id: string;
@@ -40,10 +43,45 @@ export interface Payment {
     settledAt?: string;
     failedAt?: string;
     failureReason?: string;
+    merchantId?: string;
 }
 export interface ListPaymentsParams {
     limit?: number;
     status?: PaymentStatus;
+    merchantId?: string;
+}
+export interface BankAccount {
+    id: string;
+    merchantId: string;
+    currency: LocalCurrency;
+    bankName: string;
+    bankCode: string;
+    accountNumber: string;
+    accountName: string;
+    isVerified: boolean;
+    isPrimary: boolean;
+    createdAt: string;
+}
+export interface Withdrawal {
+    id: string;
+    merchantId: string;
+    bankAccountId: string;
+    usdcAmount: number;
+    localCurrency: LocalCurrency;
+    localAmount: number;
+    exchangeRate: number;
+    status: WithdrawalStatus;
+    provider: 'paystack' | 'flutterwave';
+    providerReference?: string;
+    stellarTxHash?: string;
+    failureReason?: string;
+    createdAt: string;
+    completedAt?: string;
+}
+export interface CreateWithdrawalParams {
+    merchantId: string;
+    bankAccountId: string;
+    usdcAmount: number;
 }
 export interface WebhookPayload {
     event: WebhookEvent;

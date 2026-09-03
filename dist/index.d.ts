@@ -1,7 +1,9 @@
 import { ClinkConfig, CreatePaymentParams, ListPaymentsParams, Payment, VerifyWebhookParams } from './types';
 declare class Clink {
     readonly payments: {
-        create: (params: CreatePaymentParams) => Promise<Payment>;
+        create: (params: CreatePaymentParams & {
+            merchantStellarAddress?: string;
+        }) => Promise<Payment>;
         verify: (paymentId: string) => Promise<Payment>;
         list: (filters?: ListPaymentsParams) => Promise<Payment[]>;
     };
@@ -13,8 +15,8 @@ declare class Clink {
 }
 export default Clink;
 export { PaymentsService } from './payments/service';
-export { MockSettlementProvider } from './settlement/mock';
-export { SqlitePaymentRepository } from './storage/sqlite';
+export { PaystackSettlementProvider } from './settlement/paystackSettlement';
+export { PgPaymentRepository } from './storage/payments';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';
 export { verifyWebhookSignature } from './webhooks/verify';

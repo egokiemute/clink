@@ -11,7 +11,7 @@ services:
         value: 24
 
       # ── Core ────────────────────────────────────────────────
-      - key: MONGODB_URI
+      - key: DATABASE_URL
         sync: false
       - key: CLINK_SECRET_KEY
         sync: false

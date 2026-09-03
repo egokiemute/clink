@@ -1,5 +1,5 @@
 import { CreatePaymentParams, ListPaymentsParams, Payment, SettlementResult, WebhookEvent } from '../types';
-import { PaymentRepository } from '../storage/sqlite';
+import { PaymentRepository } from '../storage/payments';
 export interface StellarPaymentReader {
     publicKey: string;
     findPayment(params: {
@@ -32,7 +32,9 @@ export declare class PaymentsService {
     private readonly webhookDispatcher;
     private readonly options;
     constructor(repository: PaymentRepository, stellarClient: StellarPaymentReader, settlementProvider: SettlementProvider, webhookDispatcher: PaymentWebhookDispatcher, options: PaymentsServiceOptions);
-    create(params: CreatePaymentParams): Promise<Payment>;
+    create(params: CreatePaymentParams & {
+        merchantStellarAddress?: string;
+    }): Promise<Payment>;
     verify(paymentId: string): Promise<Payment>;
     list(filters?: ListPaymentsParams): Promise<Payment[]>;
     private settlePayment;

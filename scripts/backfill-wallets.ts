@@ -5,15 +5,15 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import { MongoClient } from 'mongodb';
+import { Pool } from 'pg';
 import { Keypair } from '@stellar/stellar-sdk';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 
-const MONGODB_URI = process.env.MONGODB_URI!;
+const DATABASE_URL = process.env.DATABASE_URL!;
 const PLATFORM_ENCRYPTION_KEY = process.env.PLATFORM_ENCRYPTION_KEY!;
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK ?? 'testnet') as 'testnet' | 'mainnet';
 
-if (!MONGODB_URI) throw new Error('MONGODB_URI is not set');
+if (!DATABASE_URL) throw new Error('DATABASE_URL is not set');
 if (!PLATFORM_ENCRYPTION_KEY || PLATFORM_ENCRYPTION_KEY.length !== 64) {
   throw new Error('PLATFORM_ENCRYPTION_KEY must be a 64-character hex string');
 }
@@ -56,19 +56,23 @@ async function createTestnetAccount(): Promise<{ publicKey: string; secretKey: s
 }
 
 async function main() {
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
-  const db = client.db();
-  const col = db.collection('developers');
+  const pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL.includes('localhost') ? undefined : { rejectUnauthorized: false },
+  });
 
   // Find merchants who are approved OR have no verificationStatus (pre-KYB), and have no wallet
-  const merchants = await col.find({
-    stellarPublicKey: { $exists: false },
-    $or: [
-      { verificationStatus: 'approved' },
-      { verificationStatus: { $exists: false } },
-    ],
-  }, { projection: { _id: 0, id: 1, name: 1, email: 1, verificationStatus: 1 } }).toArray();
+  const { rows: merchants } = await pool.query<{
+    id: string;
+    name: string;
+    email: string;
+    verification_status: string | null;
+  }>(
+    `SELECT id, name, email, verification_status
+       FROM developers
+      WHERE stellar_public_key IS NULL
+        AND (verification_status = 'approved' OR verification_status IS NULL)`,
+  );
 
   console.log(`Found ${merchants.length} merchant(s) without a wallet.\n`);
 
@@ -89,9 +93,11 @@ async function main() {
 
       const stellarSecretKeyEncrypted = encryptSecret(secretKey);
 
-      await col.updateOne(
-        { id: merchant.id },
-        { $set: { stellarPublicKey: publicKey, stellarSecretKeyEncrypted } },
+      await pool.query(
+        `UPDATE developers
+            SET stellar_public_key = $2, stellar_secret_key_encrypted = $3
+          WHERE id = $1`,
+        [merchant.id, publicKey, stellarSecretKeyEncrypted],
       );
 
       console.log(`OK\n    Public key: ${publicKey}`);
@@ -101,7 +107,7 @@ async function main() {
   }
 
   console.log('\nDone.');
-  await client.close();
+  await pool.end();
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

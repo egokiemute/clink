@@ -8,7 +8,8 @@ import Clink from './index';
 import { DeveloperService } from './developers/service';
 import { DeveloperRepository } from './storage/developers';
 import { AdminRepository } from './storage/admins';
-import { MongoPaymentRepository } from './storage/mongo-payments';
+import { ensureSchema } from './storage/pg';
+import { PgPaymentRepository } from './storage/payments';
 import { BankAccountRepository } from './storage/bankAccounts';
 import { WithdrawalRepository } from './storage/withdrawals';
 import { MerchantWalletService } from './merchants/walletService';
@@ -41,7 +42,7 @@ function requireEnv(name: string): string {
 const developerRepo = new DeveloperRepository();
 const developerService = new DeveloperService(developerRepo);
 const adminRepo = new AdminRepository();
-const paymentRepo = new MongoPaymentRepository();
+const paymentRepo = new PgPaymentRepository();
 const bankAccountRepo = new BankAccountRepository();
 const withdrawalRepo = new WithdrawalRepository();
 
@@ -628,6 +629,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-seedAdmin()
+ensureSchema()
+  .then(() => seedAdmin())
   .then(() => server.listen(PORT, () => console.log(`Clink server running on port ${PORT}`)))
-  .catch((err) => { console.error('[startup] Failed to seed admin:', err); process.exit(1); });
+  .catch((err) => { console.error('[startup] Failed to start:', err); process.exit(1); });

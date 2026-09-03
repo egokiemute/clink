@@ -1,6 +1,6 @@
 import { PaymentsService } from './payments/service';
 import { PaystackSettlementProvider } from './settlement/paystackSettlement';
-import { MongoPaymentRepository } from './storage/mongo-payments';
+import { PgPaymentRepository } from './storage/payments';
 import { StellarClient } from './stellar/client';
 import {
   ClinkConfig,
@@ -69,7 +69,7 @@ class Clink {
 
     this.config = resolvedConfig;
 
-    const repository = new MongoPaymentRepository();
+    const repository = new PgPaymentRepository();
     const stellarClient = new StellarClient({
       network: this.config.environment,
       secretKey: this.config.stellarSecretKey,
@@ -109,7 +109,7 @@ export default Clink;
 
 export { PaymentsService } from './payments/service';
 export { PaystackSettlementProvider } from './settlement/paystackSettlement';
-export { MongoPaymentRepository } from './storage/mongo-payments';
+export { PgPaymentRepository } from './storage/payments';
 export { StellarClient } from './stellar/client';
 export { ClinkError } from './utils/errors';
 export { verifyWebhookSignature } from './webhooks/verify';

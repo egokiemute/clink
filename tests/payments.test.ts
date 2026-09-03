@@ -1,6 +1,36 @@
 import { PaymentsService } from '../src/payments/service';
-import { SqlitePaymentRepository } from '../src/storage/sqlite';
-import { PaymentMatch } from '../src/types';
+import { PaymentRepository } from '../src/storage/payments';
+import { ListPaymentsParams, Payment, PaymentMatch } from '../src/types';
+
+class InMemoryPaymentRepository implements PaymentRepository {
+  private readonly store = new Map<string, Payment>();
+
+  async create(payment: Payment): Promise<Payment> {
+    this.store.set(payment.id, { ...payment });
+    return payment;
+  }
+
+  async getById(id: string): Promise<Payment | null> {
+    const found = this.store.get(id);
+    return found ? { ...found } : null;
+  }
+
+  async update(id: string, updates: Partial<Payment>): Promise<Payment | null> {
+    const current = this.store.get(id);
+    if (!current) return null;
+    const next = { ...current, ...updates };
+    this.store.set(id, next);
+    return { ...next };
+  }
+
+  async list(filters: ListPaymentsParams = {}): Promise<Payment[]> {
+    let rows = [...this.store.values()];
+    if (filters.status) rows = rows.filter((p) => p.status === filters.status);
+    if (filters.merchantId) rows = rows.filter((p) => p.merchantId === filters.merchantId);
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return rows.slice(0, filters.limit ?? 20).map((p) => ({ ...p }));
+  }
+}
 
 const RECEIVING_ADDRESS = 'GCEUHLTXIODT3XXIKZZKHZWX5A2H54BGKGKZPWRZZEZBHOK26C7OEEWR';
 
@@ -9,7 +39,7 @@ function createPaymentsService(options?: {
   settlementShouldFail?: boolean;
   paymentExpiryMinutes?: number;
 }) {
-  const repository = new SqlitePaymentRepository(':memory:');
+  const repository = new InMemoryPaymentRepository();
   const stellarClient = {
     publicKey: RECEIVING_ADDRESS,
     findPayment: jest.fn().mockResolvedValue(options?.paymentMatch ?? { found: false }),
@@ -63,7 +93,7 @@ describe('PaymentsService', () => {
     expect(payment.stellarAddress).toBe(RECEIVING_ADDRESS);
     expect(payment.memo).toBe(`clink-${payment.id}`);
     expect(payment.status).toBe('pending');
-    expect(repository.getById(payment.id)?.metadata).toEqual({ orderId: '1234' });
+    expect((await repository.getById(payment.id))?.metadata).toEqual({ orderId: '1234' });
 
     const listed = await service.list({ status: 'pending', limit: 10 });
     expect(listed).toHaveLength(1);
@@ -116,7 +146,7 @@ describe('PaymentsService', () => {
       callbackUrl: 'https://merchant.example/webhooks/clink',
     });
 
-    repository.update(payment.id, {
+    await repository.update(payment.id, {
       expiresAt: new Date(Date.now() - 1_000).toISOString(),
     });
 

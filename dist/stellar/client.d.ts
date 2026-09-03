@@ -46,6 +46,12 @@ export declare class StellarClient {
         destination: string;
         amount: string;
         memo?: string;
+        secretKey?: string;
+    }): Promise<PaymentResult>;
+    sendXLM(params: {
+        destination: string;
+        amount: string;
+        memo?: string;
     }): Promise<PaymentResult>;
     watchForUSDCPayment(params: {
         address?: string;

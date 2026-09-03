@@ -8,7 +8,7 @@ import {
 import { generatePaymentId, generatePaymentMemo } from '../utils/crypto';
 import { ClinkError } from '../utils/errors';
 import { assertValidCreatePaymentParams } from '../utils/validation';
-import { PaymentRepository } from '../storage/mongo-payments';
+import { PaymentRepository } from '../storage/payments';
 
 export interface StellarPaymentReader {
   publicKey: string;

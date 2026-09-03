@@ -4,11 +4,14 @@ import { ClinkError } from '../src/utils/errors';
 const RECEIVING_ADDRESS = 'GCEUHLTXIODT3XXIKZZKHZWX5A2H54BGKGKZPWRZZEZBHOK26C7OEEWR';
 
 describe('Clink', () => {
-  it('creates payments from the root SDK class', async () => {
+  // Requires a live Postgres (Neon) connection via DATABASE_URL — the root SDK
+  // class wires up PgPaymentRepository internally. Run with DATABASE_URL set.
+  const dbTest = process.env.DATABASE_URL ? it : it.skip;
+
+  dbTest('creates payments from the root SDK class', async () => {
     const clink = new Clink({
       secretKey: 'clink_sk_test_12345',
       environment: 'testnet',
-      databasePath: ':memory:',
       receivingAddress: RECEIVING_ADDRESS,
     });
 
@@ -22,7 +25,7 @@ describe('Clink', () => {
     const payments = await clink.payments.list();
 
     expect(payment.status).toBe('pending');
-    expect(payments).toHaveLength(1);
+    expect(payments.length).toBeGreaterThanOrEqual(1);
     expect(clink.webhooks.verify).toEqual(expect.any(Function));
   });
 
@@ -32,7 +35,6 @@ describe('Clink', () => {
         new Clink({
           secretKey: 'invalid',
           environment: 'testnet',
-          databasePath: ':memory:',
           receivingAddress: RECEIVING_ADDRESS,
         }),
     ).toThrow(ClinkError);
