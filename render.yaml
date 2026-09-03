@@ -2,33 +2,56 @@ services:
   - type: web
     name: clink-api
     runtime: node
+    plan: starter
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: 24
+
+      # ── Core ────────────────────────────────────────────────
+      - key: MONGODB_URI
+        sync: false
       - key: CLINK_SECRET_KEY
         sync: false
       - key: CLINK_WEBHOOK_SECRET
         sync: false
-      - key: CLINK_DATABASE_PATH
-        value: /data/clink.sqlite
+      - key: PLATFORM_ENCRYPTION_KEY
+        sync: false
       - key: CLINK_PAYMENT_EXPIRY_MINUTES
         value: 30
+
+      # ── Admin ───────────────────────────────────────────────
+      - key: CLINK_ADMIN_KEY
+        sync: false
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      # ── Stellar ─────────────────────────────────────────────
       - key: STELLAR_NETWORK
         value: testnet
+      - key: STELLAR_HORIZON_URL
+        value: https://horizon-testnet.stellar.org
       - key: STELLAR_MASTER_SECRET
         sync: false
       - key: STELLAR_RECEIVING_ADDRESS
         sync: false
-      - key: STELLAR_HORIZON_URL
-        value: https://horizon-testnet.stellar.org
+      - key: STELLAR_COLLECTION_ADDRESS
+        sync: false
+      - key: STELLAR_FUNDER_SECRET
+        sync: false
+
+      # ── Payouts ─────────────────────────────────────────────
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FLUTTERWAVE_SECRET_KEY
+        sync: false
+
+      # ── Email (Zoho SMTP) ───────────────────────────────────
       - key: SMTP_USER
         value: onboarding@okiemute.cv
       - key: SMTP_PASS
         sync: false
-    disk:
-      name: clink-data
-      mountPath: /data
-      sizeGB: 1
